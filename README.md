@@ -35,9 +35,28 @@ A pesquisa retorna resultados obtidos pelo yt-dlp, sem inventar títulos/canais.
 
 Os arquivos baixados, os executáveis locais e os dados pessoais não devem ser commitados. O padrão de saída inclui o ID do conteúdo para reduzir colisões. Arquivos existentes não são sobrescritos. O yt-dlp mantém arquivos `.part` enquanto um download está incompleto para poder retomá-lo; o núcleo só registra sucesso depois de confirmar um arquivo final não vazio.
 
-## Integração com IA 2
+## Integração com IA 2 — metadados, capas e identificação musical
 
-Veja [`INTEGRATION.md`](INTEGRATION.md) para o contrato `processar_mp3(caminho, metadados)` e a configuração opcional `BAIXADOR_METADATA_MODULE`. Sem o módulo, o núcleo conclui o MP3 e mantém a integração desativada.
+Veja [`INTEGRATION.md`](INTEGRATION.md) para o contrato `processar_mp3(caminho, metadados)`. A IA 2 implementa esse contrato sem alterar o núcleo:
+
+```powershell
+# Windows PowerShell
+$env:BAIXADOR_METADATA_MODULE = "modulo_metadados"
+python musica.py download "https://..." --formato mp3
+```
+
+```bash
+# Linux/macOS
+BAIXADOR_METADATA_MODULE=modulo_metadados python musica.py download "https://..." --formato mp3
+```
+
+Depois do download, o MP3 é enriquecido no próprio arquivo: a música é identificada nas APIs públicas do MusicBrainz, iTunes e Deezer (álbum, ano, gênero, faixa, gravadora — somente dados devolvidos pelas APIs, nada é inventado), a capa oficial do álbum/single é baixada, validada e **incorporada ao MP3** (ID3/APIC via Mutagen), junto de título/artista/álbum/ano/gênero/faixa/gravadora. Se as APIs estiverem indisponíveis, o arquivo recebe apenas título/artista extraídos do próprio nome e o download nunca é perdido.
+
+- `inteligencia.py`: interpretação do título bruto (artista/título/`feat.`, canal `- Topic`), provedores MusicBrainz/iTunes/Deezer com pontuação de confiança e mescla de campos da mesma faixa; IA externa opcional (`BAIXADOR_IA_API_KEY`, `BAIXADOR_IA_MODELO`, `BAIXADOR_IA_URL`) apenas interpreta o título — campos factuais da IA são descartados.
+- `capas.py`: capas oficiais em boa resolução (iTunes 1200px → Cover Art Archive → Deezer 1000px; thumbnail do YouTube só como último recurso), validação por assinatura/dimensões reais e processamento com Pillow quando disponível (`BAIXADOR_SEM_CAPA=1` desliga a busca de capa).
+- `metadados.py` / `modulo_metadados.py`: gravação ID3v2.3 com Mutagen e o `processar_mp3(caminho, metadados)` do contrato (`BAIXADOR_METADATA_TIMEOUT` ajusta o tempo das consultas).
+
+Sem a variável, o núcleo conclui o MP3 e mantém a integração desativada.
 
 ## Testes
 
