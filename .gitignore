@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.baixador/
+Musicas/
+Videos/
+ferramentas/yt-dlp.exe
+ferramentas/ffmpeg.exe
+ferramentas/yt-dlp
+ferramentas/ffmpeg
+cookies.txt
+*.part
+*.ytdl
