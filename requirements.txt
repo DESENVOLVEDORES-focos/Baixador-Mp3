@@ -1,1 +1,4 @@
 yt-dlp>=2024.12.23
+mutagen>=1.47
+# Opcional (processamento/redimensionamento de capas; sem ele a capa validada e mantida):
+# Pillow>=10
