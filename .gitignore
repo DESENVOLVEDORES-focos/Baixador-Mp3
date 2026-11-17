@@ -15,3 +15,8 @@ ferramentas/ffmpeg
 cookies.txt
 *.part
 *.ytdl
+# Etapa 3: credenciais e preferencias locais (nunca commitar)
+**/cookies.txt
+**/preferencias.json
+*.cookies.txt
+cookies-export.txt
