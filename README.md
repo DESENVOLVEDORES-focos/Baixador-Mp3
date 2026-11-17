@@ -35,6 +35,23 @@ A pesquisa retorna resultados obtidos pelo yt-dlp, sem inventar títulos/canais.
 
 Os arquivos baixados, os executáveis locais e os dados pessoais não devem ser commitados. O padrão de saída inclui o ID do conteúdo para reduzir colisões. Arquivos existentes não são sobrescritos. O yt-dlp mantém arquivos `.part` enquanto um download está incompleto para poder retomá-lo; o núcleo só registra sucesso depois de confirmar um arquivo final não vazio.
 
+
+## Interface gráfica e configurações (Etapa 3)
+
+Sem terminal: no Windows, execute `instalar_windows.bat` uma vez e depois dê dois cliques em `iniciar_interface.bat` (ou rode `python interface.py` / `python musica.py gui`). A interface (Tkinter, incluído no Python do Windows) tem abas **Baixar** (pesquisa, URL direta, MP3/MP4, resultados, progresso e mensagens), **Fila**, **Histórico** e **Configurações**. A lógica vive em `interface.ControladorInterface`, separada das janelas, falando só com os módulos existentes — nenhum downloader foi recriado e o contrato `processar_mp3(caminho, metadados)` / `BAIXADOR_METADATA_MODULE=modulo_metadados` está preservado.
+
+### Configurações (salvas neste computador, em `.baixador/preferencias.json`)
+
+- **APIs e inteligência artificial:** chave da IA externa (opcional), com mostrar/ocultar, salvar e testar conexão; a chave é protegida pelo Windows (DPAPI, vinculada ao seu usuário) e nunca aparece em texto puro no arquivo, logs ou Git. MusicBrainz, iTunes e Deezer são públicos, **funcionam sem chave** e só têm botão de testar conexão — nada é obrigatório.
+- **Downloads:** pastas de MP3/MP4, formato e qualidade padrão, resultados por pesquisa e os interruptores de metadados/capas da IA 2. Tudo é respeitado pelo motor (a CLI sem interface também lê as preferências salvas).
+- **Cookies do YouTube:** veja abaixo.
+
+### Cookies do YouTube (opcional)
+
+Alguns conteúdos pedem autenticação. Na aba Configurações → **COOKIES DO YOUTUBE** você seleciona um `cookies.txt`, que é validado (formato Netscape) e copiado para `.baixador/cookies.txt`; daí em diante o programa entrega esse arquivo ao yt-dlp automaticamente (`--cookies`) em downloads e pesquisas, sem você informar o caminho de novo. Dá para substituir, verificar e remover pela mesma tela.
+
+Para exportar o seu arquivo: entre no YouTube no seu navegador, use uma extensão de exportação de cookies que gere o formato Netscape `cookies.txt` para `youtube.com` e salve o arquivo — este programa nunca pede sua senha do Google. **Atenção:** o `cookies.txt` equivale a uma credencial da sua conta. Ele fica só neste computador, nunca é enviado a APIs externas, nunca entra em logs/commits (está no `.gitignore`) e não deve ser compartilhado.
+
 ## Integração com IA 2 — metadados, capas e identificação musical
 
 Veja [`INTEGRATION.md`](INTEGRATION.md) para o contrato `processar_mp3(caminho, metadados)`. A IA 2 implementa esse contrato sem alterar o núcleo:

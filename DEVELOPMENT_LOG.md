@@ -66,3 +66,30 @@
 ### Pendências
 - Teste ao vivo (identificação + capa reais e download real via núcleo) requer rede liberada para MusicBrainz/iTunes/Deezer/YouTube e yt-dlp/FFmpeg instalados.
 - Sugestão à IA 1: incluir `titulo`/`canal`/`duracao` no dicionário enviado a `processar_mp3` em versão futura do contrato, para identificação ainda mais precisa que o nome do arquivo.
+
+## 2026-11-17 — Etapa 3: integração, interface gráfica e configurações
+
+### Inspeção
+- Relidos README, INTEGRATION, CHANGELOG, este log, `integracao.py` e `configuracoes.py`, e conferidas as branches: IA 1 segue em `930146d` (sem mudanças desde o merge da Etapa 2); nenhuma interface gráfica existia (`grep` por tkinter/gui vazio). Tkinter não existe no Python deste sandbox (Linux sem `python3-tk`) — a GUI é Tkinter porque acompanha o Python oficial no Windows e não adiciona dependências.
+
+### Implementação
+- `preferencias.py`: `Preferencias` + salvar/carregar atômico em `<dados>/preferencias.json`; cofre com DPAPI via `ctypes` (`CryptProtectData`) no Windows e codificação + `chmod 0600` nos demais; `mascarar_segredo` para a interface; `aplicar_ao_ambiente` (mesmas variáveis que IA 1/IA 2 já respeitam) e `derivar_configuracoes`.
+- `configuracoes.py` (IA 1, adições retrocompatíveis): campos opcionais `diretorio_musicas/diretorio_videos/caminho_cookies/qualidade_mp3`, propriedades `musicas/videos` respeitando a preferência, `resolver_cookies()` (configurado → `BAIXADOR_COOKIES` → `<dados>/cookies.txt`) e `argumentos_cookies()` tolerante aos fakes de teste existentes. Os 15 testes da IA 1 seguem passando.
+- `cookies_youtube.py`: validação Netscape (7 campos/tabulação, `#HttpOnly_`, contagem total/YouTube sem expor conteúdo), importação validada com cópia atômica e 0600, status e remoção.
+- `downloader.py`: `*argumentos_cookies(...)` e `--audio-quality` vindo das preferências (padrão `"0"`, comportamento original). `pesquisa.py`: `construir_comando()` isolado com os mesmos cookies. `musica.py`: `Aplicacao()` sem config explícita carrega as preferências (CLI também respeita cookies/pastas/chaves salvas) e novo subcomando `gui`.
+- `interface.py`: `ControladorInterface` (toda a lógica, sem Tkinter, reutilizando `Aplicacao/FilaDownloads/Historico` e o adaptador de metadados) + `AplicativoGrafico` (abas Baixar/Fila/Histórico/Configurações rolável, tarefas em thread com barra de progresso, mensagens de sucesso/erro; Configurações com APIs — chave com mostrar/ocultar/salvar/testar e estado — provedores públicos sem chave com testar, COOKIES DO YOUTUBE com selecionar/substituir/verificar/remover e aviso de credencial, e Downloads com pastas/formato/qualidade/limite/metadados/capas).
+- `instalar_windows.bat` e `iniciar_interface.bat`; `.gitignore` com `**/cookies.txt`, `**/preferencias.json` e afins (a pasta `.baixador/` já era ignorada).
+
+### Decisões e problemas tratados
+- Não existe IA 3 separada: a Etapa 3 foi executada pela mesma sessão (IA 2), na branch fixa `arena/58df5ecb-baixador-mp3`, sem tocar `main` nem a branch da IA 1.
+- Segredos: DPAPI real no Windows; fora dele não há cofre do SO disponível sem dependências, então o arquivo fica restrito (0600) dentro de `.baixador/` (ignorado pelo Git) e isso está documentado — nenhum segredo em código-fonte.
+- Conflitos entre IA 1/IA 2: nenhum funcional encontrado; o único atrito histórico (núcleo não enviar título/canal ao `processar_mp3`) segue contornado pelo nome do arquivo, sem mudar o contrato.
+
+### Testes executados
+- `python -m unittest discover -s tests`: 54 testes — 53 aprovados, 1 pulado (`TestJanelaTk`, sem Tkinter/display neste ambiente; a máscara da chave é testada via `mascarar_segredo` e o `show="•"` é lógica padrão do widget).
+- `python -m py_compile interface.py preferencias.py cookies_youtube.py`: passou; `python interface.py` sem Tkinter encerra com mensagem clara (exit 1) em vez de traceback; `python musica.py --help` lista o novo `gui`.
+- Não executados (registrado, não fingido): abertura real da janela, downloads/pesquisas reais no YouTube e testar conexão ao vivo — rede/display/yt-dlp/FFmpeg indisponíveis neste sandbox.
+
+### Pendências
+- Validar a janela em um Windows real (dois cliques no `.bat`) e o DPAPI nesse sistema.
+- Mesma pendência da Etapa 2: teste ao vivo completo com rede liberada e yt-dlp/FFmpeg.
