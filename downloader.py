@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from configuracoes import CONFIG, Configuracoes
+from configuracoes import CONFIG, Configuracoes, argumentos_cookies
 
 Formato = Literal["mp3", "mp4"]
 
@@ -67,17 +67,25 @@ class Downloader:
             "--socket-timeout", "30",
             "--retry-sleep", "http:exp=1:20",
             "--ffmpeg-location", ffmpeg,
+            # Cookies do usuário (Etapa 3), quando importados na interface:
+            # só o caminho vai ao yt-dlp local; o conteúdo nunca é lido aqui.
+            *argumentos_cookies(self.config),
             "--paths", str(destino),
             "--output", "%(title).180B [%(id)s].%(ext)s",
             # A linha impressa após o processamento permite verificar o arquivo real.
             "--print", "after_move:filepath",
         ]
         if formato == "mp3":
+            # Qualidade das preferências (Etapa 3); padrão "0" = melhor,
+            # exatamente o comportamento original do núcleo.
+            qualidade = str(getattr(self.config, "qualidade_mp3", "0") or "0")
+            if not (qualidade.isdigit() or qualidade.upper().endswith("K")):
+                qualidade = "0"
             argumentos.extend([
                 "--format", "bestaudio/best",
                 "--extract-audio",
                 "--audio-format", "mp3",
-                "--audio-quality", "0",
+                "--audio-quality", qualidade,
                 "--embed-metadata",
             ])
         else:

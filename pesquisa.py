@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any
 
-from configuracoes import CONFIG, Configuracoes
+from configuracoes import CONFIG, Configuracoes, argumentos_cookies
 
 
 @dataclass(frozen=True)
@@ -38,18 +38,24 @@ class Pesquisador:
         self.config = configuracoes
         self.timeout = timeout
 
-    def pesquisar(self, consulta: str, limite: int = 10) -> list[ResultadoPesquisa]:
+    def construir_comando(self, consulta: str, limite: int = 10) -> list[str]:
+        """Monta o argv da pesquisa (isolado p/ testes; inclui cookies)."""
         consulta = consulta.strip()
         if not consulta:
             raise ValueError("Digite termos para pesquisar.")
         if not 1 <= limite <= 50:
             raise ValueError("O limite deve estar entre 1 e 50 resultados.")
-        comando = [
+        return [
             *self.config.comando_yt_dlp(),
             "--ignore-config", "--no-warnings", "--skip-download",
+            *argumentos_cookies(self.config),
             "--flat-playlist", "--dump-single-json",
             f"ytsearch{limite}:{consulta}",
         ]
+
+    def pesquisar(self, consulta: str, limite: int = 10) -> list[ResultadoPesquisa]:
+        comando = self.construir_comando(consulta, limite)
+        consulta = consulta.strip()
         try:
             processo = subprocess.run(
                 comando, capture_output=True, text=True, encoding="utf-8",

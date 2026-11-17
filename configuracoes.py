@@ -12,9 +12,18 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Configuracoes:
-    """Caminhos locais do aplicativo; não depende do diretório de execução."""
+    """Caminhos locais do aplicativo; não depende do diretório de execução.
+
+    Os campos opcionais (Etapa 3) vêm das preferências do usuário salvas
+    pela interface (``preferencias.py``); sem eles, vale o comportamento
+    original: ``Musicas/``, ``Videos/``, sem cookies e qualidade ``0``.
+    """
 
     raiz: Path = field(default_factory=lambda: Path(__file__).resolve().parent)
+    diretorio_musicas: Path | None = None
+    diretorio_videos: Path | None = None
+    caminho_cookies: Path | None = None
+    qualidade_mp3: str = "0"
 
     @property
     def ferramentas(self) -> Path:
@@ -22,11 +31,33 @@ class Configuracoes:
 
     @property
     def musicas(self) -> Path:
-        return self.raiz / "Musicas"
+        return self.diretorio_musicas or self.raiz / "Musicas"
 
     @property
     def videos(self) -> Path:
-        return self.raiz / "Videos"
+        return self.diretorio_videos or self.raiz / "Videos"
+
+    def resolver_cookies(self) -> Path | None:
+        """Arquivo de cookies do yt-dlp, sem nunca expor o conteúdo.
+
+        Ordem: caminho configurado (interface), variável
+        ``BAIXADOR_COOKIES`` e a cópia gerenciada em ``<dados>/cookies.txt``.
+        Só devolve caminho existente; ``None`` = baixar sem cookies.
+        """
+        candidatos: list[Path] = []
+        if self.caminho_cookies:
+            candidatos.append(Path(self.caminho_cookies).expanduser())
+        ambiente = os.environ.get("BAIXADOR_COOKIES", "").strip()
+        if ambiente:
+            candidatos.append(Path(ambiente).expanduser())
+        candidatos.append(self.dados / "cookies.txt")
+        for candidato in candidatos:
+            try:
+                if candidato.is_file():
+                    return candidato.resolve()
+            except OSError:
+                continue
+        return None
 
     @property
     def dados(self) -> Path:
@@ -100,3 +131,25 @@ class Configuracoes:
 
 
 CONFIG = Configuracoes()
+
+
+def argumentos_cookies(configuracoes: object) -> list[str]:
+    """``["--cookies", caminho]`` para o yt-dlp, ou ``[]`` sem cookies.
+
+    Aceita qualquer objeto de configuração (inclusive os fakes de teste):
+    usa ``resolver_cookies()`` quando existir e nunca registra o conteúdo
+    do arquivo — apenas o caminho é passado ao yt-dlp, como credencial
+    local do próprio usuário.
+    """
+    resolver = getattr(configuracoes, "resolver_cookies", None)
+    caminho: Path | None = None
+    if callable(resolver):
+        try:
+            caminho = resolver()
+        except Exception:
+            caminho = None
+    if caminho is None:
+        direto = getattr(configuracoes, "caminho_cookies", None)
+        if direto and Path(direto).is_file():
+            caminho = Path(direto)
+    return ["--cookies", str(caminho)] if caminho else []

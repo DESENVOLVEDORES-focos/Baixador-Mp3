@@ -16,6 +16,21 @@ from pesquisa import ErroPesquisa, Pesquisador
 
 class Aplicacao:
     def __init__(self, configuracoes: Configuracoes = CONFIG):
+        # Sem config explícita (CLI/interface), respeita as preferências
+        # salvas pelo usuário (Etapa 3): diretórios, cookies, qualidade e
+        # chaves/opções da IA 2 via ambiente. Com config explícita (testes,
+        # injeção), nada é alterado — comportamento original preservado.
+        if configuracoes is CONFIG:
+            try:
+                from preferencias import (
+                    aplicar_ao_ambiente, carregar, derivar_configuracoes,
+                )
+
+                preferencias = carregar(CONFIG)
+                aplicar_ao_ambiente(preferencias)
+                configuracoes = derivar_configuracoes(preferencias, CONFIG)
+            except Exception:
+                configuracoes = CONFIG
         self.config = configuracoes
         self.downloader = Downloader(configuracoes)
         self.pesquisador = Pesquisador(configuracoes)
@@ -109,6 +124,8 @@ def _criar_parser() -> argparse.ArgumentParser:
     worker.add_argument("--max-tentativas", type=int, default=3)
     worker.add_argument("--intervalo", type=float, default=1.0, help="Pausa entre tentativas de falha, em segundos")
 
+    sub.add_parser("gui", help="Abre a interface gráfica (sem terminal)")
+
     reabrir = sub.add_parser("retry-failed", help="Reabre itens que esgotaram as tentativas")
     historico = sub.add_parser("history", help="Exibe downloads e falhas recentes")
     historico.add_argument("--limite", type=int, default=20)
@@ -130,6 +147,11 @@ def _mostrar_resultados(resultados: list[Any]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = _criar_parser()
     args = parser.parse_args(argv)
+
+    if args.comando == "gui":
+        from interface import main as _main_gui
+
+        return _main_gui()
 
     try:
         app = Aplicacao()
