@@ -1,0 +1,197 @@
+"""CLI do Baixador-Mp3. Execute ``python musica.py --help`` para ver comandos."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from configuracoes import CONFIG, Configuracoes
+from downloader import Downloader, ErroDownload
+from fila import FilaDownloads
+from historico import Historico
+from integracao import AdaptadorMetadados
+from pesquisa import ErroPesquisa, Pesquisador
+
+
+class Aplicacao:
+    def __init__(self, configuracoes: Configuracoes = CONFIG):
+        self.config = configuracoes
+        self.downloader = Downloader(configuracoes)
+        self.pesquisador = Pesquisador(configuracoes)
+        self.fila = FilaDownloads(configuracoes)
+        self.historico = Historico(configuracoes)
+        self.metadados = AdaptadorMetadados()
+
+    def baixar(self, url: str, formato: str) -> tuple[bool, str]:
+        try:
+            resultado = self.downloader.baixar(url, formato)  # type: ignore[arg-type]
+            caminho = resultado.caminho
+            aviso = ""
+            if formato == "mp3" and self.metadados.disponivel:
+                try:
+                    caminho = self.metadados.processar_mp3(caminho, {
+                        "url": resultado.url,
+                        "formato": resultado.formato,
+                        "caminho": str(resultado.caminho),
+                        "inicio": resultado.iniciado_em,
+                        "conclusao": resultado.finalizado_em,
+                    })
+                except Exception as erro_integracao:
+                    aviso = f"Download concluído, mas a integração de metadados falhou: {erro_integracao}"
+                    self.historico.registrar(
+                        url=url, formato=formato, status="erro",
+                        caminho=resultado.caminho, mensagem=aviso,
+                        inicio=resultado.iniciado_em,
+                    )
+            self.historico.registrar(
+                url=url, formato=formato,
+                status="sucesso_com_aviso" if aviso else "sucesso",
+                caminho=caminho, mensagem=aviso, inicio=resultado.iniciado_em,
+            )
+            print(f"[OK] {formato.upper()} concluído: {caminho}")
+            if aviso:
+                print(f"[AVISO] {aviso}", file=sys.stderr)
+            return True, aviso
+        except (ErroDownload, FileNotFoundError, ValueError, OSError) as erro:
+            mensagem = str(erro)
+            saida = getattr(erro, "saida", "")
+            if saida:
+                mensagem += "\n" + saida
+            self.historico.registrar(
+                url=url, formato=formato, status="erro", mensagem=mensagem,
+            )
+            print(f"[ERRO] {mensagem}", file=sys.stderr)
+            return False, mensagem
+
+    def processar_fila(self, *, max_tentativas: int = 3, intervalo: float = 0) -> int:
+        interrompidos = self.fila.reabrir_interrompidos()
+        if interrompidos:
+            print(f"[FILA] Recuperados {interrompidos} item(ns) deixados por worker interrompido.")
+        concluidos = 0
+        while True:
+            item = self.fila.reivindicar()
+            if item is None:
+                return concluidos
+            print(f"[FILA] {item.formato.upper()} {item.url} (tentativa {item.tentativas})")
+            sucesso, mensagem = self.baixar(item.url, item.formato)
+            if sucesso:
+                self.fila.concluir(item.id)
+                concluidos += 1
+            else:
+                self.fila.falhar(item.id, mensagem, max_tentativas=max_tentativas)
+                estado = next((x.status for x in self.fila.listar(todos=True) if x.id == item.id), "falhou")
+                if estado == "pendente" and intervalo > 0:
+                    time.sleep(intervalo)
+
+
+def _criar_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="baixador-mp3",
+        description="Baixa áudio e vídeo com yt-dlp e FFmpeg; use apenas conteúdo autorizado.",
+    )
+    sub = parser.add_subparsers(dest="comando", required=True)
+
+    baixar = sub.add_parser("download", help="Baixa uma URL como MP3 ou MP4")
+    baixar.add_argument("url", help="URL http(s) do conteúdo")
+    baixar.add_argument("--formato", choices=("mp3", "mp4"), required=True)
+
+    pesquisar = sub.add_parser("search", help="Pesquisa e exibe resultados reais do yt-dlp")
+    pesquisar.add_argument("consulta", help="Texto da pesquisa")
+    pesquisar.add_argument("--limite", type=int, default=10)
+    pesquisar.add_argument("--selecionar", action="store_true", help="Seleciona um resultado e inicia o download")
+
+    adicionar = sub.add_parser("queue-add", help="Adiciona uma URL à fila persistente")
+    adicionar.add_argument("url")
+    adicionar.add_argument("--formato", choices=("mp3", "mp4"), required=True)
+
+    worker = sub.add_parser("worker", help="Processa a fila até esvaziá-la")
+    worker.add_argument("--max-tentativas", type=int, default=3)
+    worker.add_argument("--intervalo", type=float, default=1.0, help="Pausa entre tentativas de falha, em segundos")
+
+    reabrir = sub.add_parser("retry-failed", help="Reabre itens que esgotaram as tentativas")
+    historico = sub.add_parser("history", help="Exibe downloads e falhas recentes")
+    historico.add_argument("--limite", type=int, default=20)
+    sub.add_parser("check", help="Verifica se yt-dlp e FFmpeg estão disponíveis")
+    return parser
+
+
+def _mostrar_resultados(resultados: list[Any]) -> None:
+    if not resultados:
+        print("Nenhum resultado encontrado.")
+        return
+    for indice, item in enumerate(resultados, 1):
+        marcador = " [canal verificado pelo extrator]" if item.canal_verificado else ""
+        print(f"{indice:>2}. {item.titulo}")
+        print(f"    Canal: {item.canal}{marcador} | Duração: {item.duracao_formatada}")
+        print(f"    URL: {item.url}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _criar_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        app = Aplicacao()
+        app.config.preparar_diretorios()
+        if args.comando == "download":
+            sucesso, _ = app.baixar(args.url, args.formato)
+            return 0 if sucesso else 1
+        if args.comando == "search":
+            resultados = app.pesquisador.pesquisar(args.consulta, args.limite)
+            _mostrar_resultados(resultados)
+            if args.selecionar and resultados:
+                try:
+                    indice = int(input("Número do resultado para baixar (0 cancela): ").strip())
+                except (ValueError, EOFError):
+                    print("Seleção inválida.", file=sys.stderr)
+                    return 2
+                if indice == 0:
+                    return 0
+                if not 1 <= indice <= len(resultados):
+                    print("Seleção fora da lista.", file=sys.stderr)
+                    return 2
+                formato = input("Formato [mp3/mp4]: ").strip().lower()
+                if formato not in {"mp3", "mp4"}:
+                    print("Formato inválido; escolha mp3 ou mp4.", file=sys.stderr)
+                    return 2
+                sucesso, _ = app.baixar(resultados[indice - 1].url, formato)
+                return 0 if sucesso else 1
+            return 0
+        if args.comando == "queue-add":
+            item = app.fila.adicionar(args.url, args.formato)
+            print(f"Na fila: {item.id} ({item.formato}) {item.url}")
+            return 0
+        if args.comando == "worker":
+            if args.max_tentativas < 1 or args.intervalo < 0:
+                parser.error("--max-tentativas deve ser >= 1 e --intervalo >= 0")
+            quantidade = app.processar_fila(
+                max_tentativas=args.max_tentativas, intervalo=args.intervalo,
+            )
+            print(f"Processamento encerrado; downloads concluídos nesta execução: {quantidade}.")
+            return 0
+        if args.comando == "retry-failed":
+            quantidade = app.fila.reabrir_falhas()
+            print(f"Itens reabertos: {quantidade}")
+            return 0
+        if args.comando == "history":
+            registros = app.historico.listar(args.limite, incluir_erros=True)
+            for registro in registros:
+                print(json.dumps(registro, ensure_ascii=False))
+            return 0
+        if args.comando == "check":
+            try:
+                for nome, caminho in app.config.verificar_dependencias().items():
+                    print(f"[OK] {nome}: {caminho}")
+                return 0
+            except FileNotFoundError as erro:
+                print(f"[ERRO] {erro}", file=sys.stderr)
+                return 1
+    except (ErroPesquisa, ValueError, OSError, RuntimeError, ImportError) as erro:
+        print(f"[ERRO] {erro}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
