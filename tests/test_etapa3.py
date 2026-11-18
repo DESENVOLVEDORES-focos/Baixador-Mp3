@@ -201,7 +201,7 @@ class TestControladorInterface(AmbienteTemporario):
             titulo="Música", canal="Canal", duracao_formatada="1:00",
             url="https://exemplo.test/v")
         controlador.aplicacao.pesquisador = SimpleNamespace(  # type: ignore[assignment]
-            pesquisar=lambda consulta, limite: [resultado])
+            pesquisar=lambda consulta, limite, tipo="tudo": [resultado])
         self.assertEqual(controlador.pesquisar("música")[0].titulo, "Música")
 
         def baixar_falso(url, formato):

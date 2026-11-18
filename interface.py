@@ -70,9 +70,11 @@ class ControladorInterface:
         self._ultimo_caminho = ""
 
     # -- pesquisa e downloads (núcleo da IA 1 + metadados da IA 2) ---------
-    def pesquisar(self, consulta: str):
-        return self.aplicacao.pesquisador.pesquisar(
-            consulta, self.preferencias.limite_pesquisa)
+    def pesquisar(self, consulta: str, tipo: str = "tudo"):
+        """Pesquisa no próprio programa: vídeos, playlists e canais."""
+        limite = self.preferencias.limite_pesquisa
+        resultados = self.aplicacao.pesquisador.pesquisar(consulta, limite, tipo)
+        return resultados
 
     def baixar(self, url: str, formato: str, ao_progresso=None,
                politica: str | None = None,
@@ -387,6 +389,7 @@ class AplicativoGrafico:
         # Barra determinada: sem progresso real ela fica em 0 (não "gira").
         self.progresso = ttk.Progressbar(raiz, mode="determinate", maximum=100)
         abas = ttk.Notebook(raiz)
+        self._abas = abas
         abas.pack(fill="both", expand=True, padx=8, pady=(8, 4))
         self.progresso.pack(fill="x", padx=8)
         ttk.Label(raiz, textvariable=self.status_var).pack(
@@ -481,15 +484,23 @@ class AplicativoGrafico:
     # -- aba Baixar ---------------------------------------------------------
     def _montar_baixar(self) -> None:
         aba = self.aba_baixar
-        busca = ttk.LabelFrame(aba, text="Pesquisar músicas e vídeos")
+        busca = ttk.LabelFrame(
+            aba, text="Pesquisar no YouTube — digite o nome (vídeos e playlists)")
         busca.pack(fill="x", padx=8, pady=8)
         self.busca_var = tk.StringVar()
-        ttk.Entry(busca, textvariable=self.busca_var).pack(
-            side="left", fill="x", expand=True, padx=6, pady=6)
+        entrada = ttk.Entry(busca, textvariable=self.busca_var)
+        entrada.pack(side="left", fill="x", expand=True, padx=6, pady=6)
+        # Enter pesquisa: não é preciso clicar no botão.
+        entrada.bind("<Return>", lambda _e: self._ao_pesquisar())
         ttk.Button(busca, text="Pesquisar", command=self._ao_pesquisar).pack(
-            side="left", padx=6, pady=6)
+            side="left", padx=(0, 6), pady=6)
+        self.tipo_busca_var = tk.StringVar(value="Tudo")
+        ttk.Combobox(busca, textvariable=self.tipo_busca_var,
+                     values=("Tudo", "Só vídeos", "Só playlists"),
+                     width=13, state="readonly").pack(side="left", padx=(0, 6))
+        ttk.Label(busca, text="( Enter pesquisa )").pack(side="left", padx=(0, 8))
 
-        direto = ttk.LabelFrame(aba, text="Ou cole uma URL")
+        direto = ttk.LabelFrame(aba, text="Ou cole uma URL (opcional)")
         direto.pack(fill="x", padx=8, pady=4)
         self.url_var = tk.StringVar()
         ttk.Entry(direto, textvariable=self.url_var).pack(
@@ -508,13 +519,14 @@ class AplicativoGrafico:
         corpo = ttk.Frame(meio)
         corpo.pack(fill="both", expand=True)
         self.resultados_tree = ttk.Treeview(
-            corpo, columns=("titulo", "canal", "duracao", "oficial"),
+            corpo, columns=("titulo", "tipo", "canal", "duracao", "oficial"),
             show="headings", height=10,
             # "extended": Ctrl+clique e Shift+clique para escolher vários.
             selectmode="extended")
         for coluna, titulo, largura in (
-                ("titulo", "Título", 420), ("canal", "Canal", 200),
-                ("duracao", "Duração", 80), ("oficial", "Canal verificado", 120)):
+                ("titulo", "Título", 380), ("tipo", "Tipo", 150),
+                ("canal", "Canal", 170), ("duracao", "Duração", 80),
+                ("oficial", "Canal verificado", 120)):
             self.resultados_tree.heading(coluna, text=titulo)
             self.resultados_tree.column(coluna, width=largura)
         self.resultados_tree.pack(side="left", fill="both", expand=True)
@@ -539,6 +551,12 @@ class AplicativoGrafico:
                    command=self._ao_previas_selecionado).pack(side="left", padx=6)
         ttk.Button(botoes, text="Baixar selecionados",
                    command=self._baixar_varios_selecionados).pack(
+            side="left", padx=6)
+        ttk.Button(botoes, text="Abrir playlist",
+                   command=self._ao_abrir_playlist_do_resultado).pack(
+            side="left", padx=6)
+        ttk.Button(botoes, text="Usar a URL deste resultado",
+                   command=self._ao_usar_url_do_resultado).pack(
             side="left", padx=6)
 
         self._montar_downloads(aba)
@@ -625,7 +643,9 @@ class AplicativoGrafico:
         if not consulta:
             messagebox.showwarning("Baixador-Mp3", "Digite o que pesquisar.")
             return
-        self._definir_status("Pesquisando...")
+        tipo = {"Tudo": "tudo", "Só vídeos": "videos",
+                "Só playlists": "playlists"}.get(self.tipo_busca_var.get(), "tudo")
+        self._definir_status("Pesquisando no YouTube...")
 
         def concluir(resultados: list[Any]) -> None:
             self._resultados = resultados
@@ -633,14 +653,54 @@ class AplicativoGrafico:
                 self.resultados_tree.delete(item)
             for resultado in resultados:
                 self.resultados_tree.insert("", "end", values=(
-                    resultado.titulo, resultado.canal,
+                    resultado.titulo,
+                    getattr(resultado, "tipo_legivel", "Vídeo"),
+                    resultado.canal,
                     resultado.duracao_formatada,
                     "sim (evidência do extrator)"
                     if getattr(resultado, "canal_verificado", False) else "não"))
-            self._registrar(f"Pesquisa: {len(resultados)} resultado(s).")
-            self._definir_status(f"{len(resultados)} resultado(s) encontrado(s).")
+            playlists = sum(1 for r in resultados
+                            if getattr(r, "eh_playlist", False))
+            self._registrar(
+                f"Pesquisa \"{consulta}\": {len(resultados)} resultado(s), "
+                f"{playlists} playlist(s).")
+            if not resultados:
+                self._definir_status(
+                    "Nada encontrado. Tente outras palavras ou marque \"Tudo\".")
+            elif playlists:
+                self._definir_status(
+                    f"{len(resultados)} resultado(s) — {playlists} playlist(s). "
+                    "Clique em \"Abrir playlist\" para escolher as faixas.")
+            else:
+                self._definir_status(
+                    f"{len(resultados)} resultado(s) encontrado(s).")
 
-        self._executar(lambda: self.controlador.pesquisar(consulta), concluir)
+        self._executar(lambda: self.controlador.pesquisar(consulta, tipo), concluir,
+                       lambda erro: self._mostrar_erro(erro))
+
+    def _ao_abrir_playlist_do_resultado(self) -> None:
+        """Abre a playlist achada na pesquisa (sem colar link nenhum)."""
+        resultado = self._selecionado()
+        if resultado is None:
+            return
+        if not getattr(resultado, "eh_playlist", False):
+            messagebox.showinfo(
+                "Playlist", "O item selecionado é um vídeo. Para playlists, "
+                "escolha uma linha do tipo \"Playlist\" na lista.")
+            return
+        self.lote_url_var.set(resultado.url)
+        try:
+            self._abas.select(self.aba_lote)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        self._ao_listar_playlist()
+
+    def _ao_usar_url_do_resultado(self) -> None:
+        resultado = self._selecionado()
+        if resultado is not None:
+            self.url_var.set(resultado.url)
+            self._definir_status(
+                f"URL no campo de download: {resultado.titulo[:50]}")
 
     def _selecionado(self, silencioso: bool = False):
         escolha = self.resultados_tree.selection()
@@ -1000,23 +1060,51 @@ class AplicativoGrafico:
     # -- aba Configurações --------------------------------------------------
     # -- aba Lote / Playlist ------------------------------------------------
     def _montar_lote(self) -> None:
-        """Playlist inteira, vários vídeos e uma lista de URLs de uma vez."""
+        """Pesquisar playlists, listar itens e escolher o que baixar."""
         aba = self.aba_lote
         ttk.Label(aba, text=(
-            "Cole a URL de uma playlist/canal e clique em \"Listar\": nada é "
-            "baixado na listagem. Depois escolha os itens (Ctrl+clique, "
-            "Shift+clique, ou os botões de seleção rápida) e mande baixar. "
-            "Itens privados/removidos são ignorados automaticamente."),
+            "1) Digite o nome (ou cole a URL) e clique em \"Pesquisar "
+            "playlists\": nada é baixado. 2) Escolha uma playlist na lista e "
+            "clique em \"Listar itens\". 3) Marque as faixas (Ctrl+clique, "
+            "Shift+clique ou os botões de seleção) e mande baixar. Um link "
+            "também pode ser colado direto no campo se você já tiver a URL."),
             wraplength=900, justify="left").pack(anchor="w", padx=8, pady=(8, 4))
+
+        # -- pesquisa de playlists (nada de colar link) ---------------------
+        procura = ttk.Frame(aba)
+        procura.pack(fill="x", padx=8, pady=2)
+        self.lote_busca_var = tk.StringVar()
+        campo = ttk.Entry(procura, textvariable=self.lote_busca_var)
+        campo.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        campo.bind("<Return>", lambda _e: self._ao_pesquisar_playlists())
+        ttk.Button(procura, text="Pesquisar playlists",
+                   command=self._ao_pesquisar_playlists).pack(side="left")
+
+        self.playlists_tree = ttk.Treeview(
+            aba, columns=("nome", "canal", "itens"), show="headings", height=6)
+        for coluna, titulo, largura in (
+                ("nome", "Playlist encontrada", 520), ("canal", "Canal", 240),
+                ("itens", "Vídeos", 90)):
+            self.playlists_tree.heading(coluna, text=titulo)
+            self.playlists_tree.column(coluna, width=largura)
+        self.playlists_tree.pack(fill="x", padx=8, pady=2)
+        linha_pl = ttk.Frame(aba)
+        linha_pl.pack(fill="x", padx=8)
+        ttk.Button(linha_pl, text="Listar itens da playlist escolhida",
+                   command=self._ao_listar_playlist_escolhida).pack(
+            side="left", pady=(0, 2))
+        self.playlists_tree.bind(
+            "<Double-1>", lambda _e: self._ao_listar_playlist_escolhida())
+        self._playlists_encontradas: list[Any] = []
 
         linha = ttk.Frame(aba)
         linha.pack(fill="x", padx=8, pady=4)
         self.lote_url_var = tk.StringVar()
-        ttk.Label(linha, text="URL da playlist:").pack(side="left")
+        ttk.Label(linha, text="Ou a URL da playlist:").pack(side="left")
         ttk.Entry(linha, textvariable=self.lote_url_var).pack(
             side="left", fill="x", expand=True, padx=6)
-        ttk.Button(linha, text="Listar", command=self._ao_listar_playlist).pack(
-            side="left")
+        ttk.Button(linha, text="Listar itens",
+                   command=self._ao_listar_playlist).pack(side="left")
         ttk.Button(linha, text="Listar mais (500)",
                    command=lambda: self._ao_listar_playlist(500)).pack(
             side="left", padx=6)
@@ -1069,6 +1157,59 @@ class AplicativoGrafico:
         ttk.Label(aba, textvariable=self.lote_progresso_var).pack(
             anchor="w", padx=8, pady=(0, 8))
         self._playlist_atual: Any = None
+
+    def _ao_pesquisar_playlists(self) -> None:
+        """Procura playlists pelo nome, sem precisar de link."""
+        consulta = self.lote_busca_var.get().strip()
+        if not consulta:
+            messagebox.showinfo("Playlists", "Digite o nome da playlist.")
+            return
+        self.lote_info_var.set("Pesquisando playlists no YouTube...")
+        self._definir_status("Pesquisando playlists...")
+
+        def concluir(resultados: list[Any]) -> None:
+            encontradas = [r for r in resultados if getattr(r, "eh_playlist", False)]
+            self._playlists_encontradas = encontradas
+            for item in self.playlists_tree.get_children():
+                self.playlists_tree.delete(item)
+            for posicao, playlist in enumerate(encontradas):
+                self.playlists_tree.insert("", "end", iid=str(posicao), values=(
+                    playlist.titulo,
+                    playlist.canal,
+                    getattr(playlist, "quantidade", None) or ""))
+            if not encontradas:
+                self.lote_info_var.set(
+                    f"Nenhuma playlist encontrada para \"{consulta}\". "
+                    "Tente outras palavras ou cole a URL da playlist abaixo.")
+                self._definir_status("Nenhuma playlist encontrada.")
+                return
+            self.lote_info_var.set(
+                f"{len(encontradas)} playlist(s) encontrada(s) para "
+                f"\"{consulta}\". Clique na playlist e em \"Listar itens\" "
+                "(ou dê dois cliques) para ver as faixas.")
+            self._registrar(
+                f"Playlists para \"{consulta}\": {len(encontradas)}.")
+            self._definir_status(f"{len(encontradas)} playlist(s) encontrada(s).")
+
+        self._executar(
+            lambda: self.controlador.pesquisar(consulta, "playlists"), concluir,
+            lambda erro: self._mostrar_erro(erro))
+
+    def _ao_listar_playlist_escolhida(self) -> None:
+        """Leva a playlist escolhida na busca para a listagem de itens."""
+        escolha = list(self.playlists_tree.selection())  # type: ignore[attr-defined]
+        if not escolha:
+            messagebox.showinfo("Playlists", "Clique em uma playlist da lista.")
+            return
+        try:
+            indice = int(str(escolha[0]))
+        except ValueError:
+            indice = 0
+        if not 0 <= indice < len(self._playlists_encontradas):
+            return
+        playlist = self._playlists_encontradas[indice]
+        self.lote_url_var.set(playlist.url)
+        self._ao_listar_playlist()
 
     def _ao_colar_url(self) -> None:
         """Colar da área de transferência (Ctrl+V já funciona nos campos)."""

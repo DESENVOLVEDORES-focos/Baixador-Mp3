@@ -1,9 +1,16 @@
-"""Pesquisa real de vídeos/músicas usando a busca do yt-dlp."""
+"""Pesquisa real de vídeos **e playlists** usando a busca do yt-dlp.
+
+O usuário digita o nome no próprio programa — não precisa colar link. A mesma
+busca devolve vídeos e playlists; a interface mostra o tipo de cada resultado e,
+para playlist, um botão que abre a lista para escolher as faixas.
+"""
 
 from __future__ import annotations
 
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote_plus
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +27,22 @@ class ResultadoPesquisa:
     disponibilidade: str | None = None
     canal_verificado: bool = False
     thumbnail: str = ""
+    tipo: str = "video"          # "video" | "playlist" | "canal"
+    quantidade: int | None = None  # itens, quando é playlist
+
+    @property
+    def eh_playlist(self) -> bool:
+        return self.tipo == "playlist"
+
+    @property
+    def tipo_legivel(self) -> str:
+        if self.tipo == "playlist":
+            if self.quantidade:
+                return f"Playlist ({self.quantidade} vídeos)"
+            return "Playlist"
+        if self.tipo == "canal":
+            return "Canal"
+        return "Vídeo"
 
     @property
     def duracao_formatada(self) -> str:
@@ -39,23 +62,97 @@ class Pesquisador:
         self.config = configuracoes
         self.timeout = timeout
 
-    def construir_comando(self, consulta: str, limite: int = 10) -> list[str]:
-        """Monta o argv da pesquisa (isolado p/ testes; inclui cookies)."""
+    def construir_comando(self, consulta: str, limite: int = 10,
+                          tipo: str = "tudo") -> list[str]:
+        """argv da pesquisa (isolado p/ testes; inclui cookies).
+
+        ``tipo``: ``tudo`` (vídeos + playlists + canais, o padrão),
+        ``videos`` ou ``playlists``. A busca nativa ``ytsearch`` só devolve
+        vídeos, então para playlists usamos a página de resultados do YouTube
+        com o filtro ``sp=EgIQAw`` (o próprio extrator do yt-dlp entende).
+        """
         consulta = consulta.strip()
         if not consulta:
             raise ValueError("Digite termos para pesquisar.")
         if not 1 <= limite <= 50:
             raise ValueError("O limite deve estar entre 1 e 50 resultados.")
+        if tipo not in ("tudo", "videos", "playlists"):
+            raise ValueError("Tipo de pesquisa inválido.")
+        if tipo == "videos":
+            alvo = f"ytsearch{limite}:{consulta}"
+        elif tipo == "playlists":
+            alvo = (f"https://www.youtube.com/results?search_query="
+                    f"{quote_plus(consulta)}&sp=EgIQAw%253D%253D")
+        else:
+            alvo = (f"https://www.youtube.com/results?search_query="
+                    f"{quote_plus(consulta)}")
         return [
             *self.config.comando_yt_dlp(),
             "--ignore-config", "--no-warnings", "--skip-download",
             *argumentos_cookies(self.config),
-            "--flat-playlist", "--dump-single-json",
-            f"ytsearch{limite}:{consulta}",
+            "--flat-playlist", "--playlist-end", str(limite),
+            "--dump-single-json",
+            alvo,
         ]
 
-    def pesquisar(self, consulta: str, limite: int = 10) -> list[ResultadoPesquisa]:
-        comando = self.construir_comando(consulta, limite)
+    def pesquisar(self, consulta: str, limite: int = 10,
+                  tipo: str = "tudo") -> list[ResultadoPesquisa]:
+        """Pesquisa no YouTube e devolve vídeos **e** playlists.
+
+        ``tudo`` roda as duas buscas em paralelo (a busca nativa do yt-dlp só
+        devolve vídeos; playlists vêm da página de resultados com filtro) e
+        mescla sem duplicar. Se uma das duas falhar, a outra ainda entrega.
+        """
+        consulta = (consulta or "").strip()
+        if not consulta:
+            raise ValueError("Digite termos para pesquisar.")
+        if not 1 <= int(limite) <= 50:
+            raise ValueError("O limite deve estar entre 1 e 50 resultados.")
+        if tipo in ("videos", "playlists"):
+            return self._pesquisar_uma(consulta, limite, tipo)
+
+        limite_playlists = max(3, limite // 2)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futuro_videos = executor.submit(
+                self._pesquisar_uma, consulta, limite, "videos")
+            futuro_listas = executor.submit(
+                self._pesquisar_uma, consulta, limite_playlists, "playlists")
+            videos: list[ResultadoPesquisa] = []
+            playlists: list[ResultadoPesquisa] = []
+            erros: list[Exception] = []
+            for futuro, destino in ((futuro_videos, videos),
+                                    (futuro_listas, playlists)):
+                try:
+                    destino.extend(futuro.result())
+                except ErroPesquisa as erro:
+                    erros.append(erro)
+                except Exception as erro:  # nunca deixa a tela sem resposta
+                    erros.append(erro)
+        if not videos and not playlists and erros:
+            raise ErroPesquisa(str(erros[0]))
+        mesclados: list[ResultadoPesquisa] = []
+        vistos: set[str] = set()
+
+        def acrescentar(itens: list[ResultadoPesquisa]) -> None:
+            for item in itens:
+                chave = item.id or item.url
+                if chave in vistos:
+                    continue
+                vistos.add(chave)
+                mesclados.append(item)
+
+        # Vídeos primeiro (é o uso mais comum), depois playlists e canais.
+        acrescentar([r for r in videos if not r.eh_playlist
+                     and r.tipo == "video"])
+        acrescentar(playlists)
+        acrescentar([r for r in videos if r.tipo == "canal"])
+        acrescentar([r for r in videos if r.eh_playlist])
+        # Canal oficial primeiro dentro de cada grupo, sem inventar nada.
+        return mesclados[:max(limite, limite + limite_playlists)]
+
+    def _pesquisar_uma(self, consulta: str, limite: int,
+                       tipo: str) -> list[ResultadoPesquisa]:
+        comando = self.construir_comando(consulta, limite, tipo)
         consulta = consulta.strip()
         try:
             processo = subprocess.run(
@@ -107,6 +204,27 @@ def _carregar_json(saida: str) -> dict[str, Any]:
     return dados
 
 
+def _tipo_do_item(item: dict[str, Any], url: str) -> tuple[str, int | None]:
+    """Classifica o resultado da busca em vídeo, playlist ou canal.
+
+    Usa só evidência do extrator (``_type``, ``ie_key``, URL): nada de adivinhar
+    pelo título.
+    """
+    tipo_bruto = str(item.get("_type") or "").lower()
+    chave = str(item.get("ie_key") or "").lower()
+    quantidade = item.get("playlist_count") or item.get("video_count")
+    try:
+        quantidade = int(quantidade) if quantidade is not None else None
+    except (TypeError, ValueError):
+        quantidade = None
+    if "list=" in url or (tipo_bruto == "playlist" and "watch" not in url):
+        return "playlist", quantidade
+    if (chave == "youtubetab" or "/@" in url or "/channel/" in url
+            or "/c/" in url or "/user/" in url):
+        return "canal", quantidade
+    return "video", None
+
+
 def _converter_item(item: dict[str, Any]) -> ResultadoPesquisa | None:
     titulo = str(item.get("title") or "").strip()
     identificador = str(item.get("id") or "").strip()
@@ -125,6 +243,7 @@ def _converter_item(item: dict[str, Any]) -> ResultadoPesquisa | None:
     thumbnail = _melhor_thumbnail(item)
     disponibilidade = item.get("availability")
     verificado = item.get("channel_is_verified") is True or item.get("is_verified") is True
+    tipo, quantidade = _tipo_do_item(item, url)
     return ResultadoPesquisa(
         id=identificador,
         titulo=titulo,
@@ -134,6 +253,8 @@ def _converter_item(item: dict[str, Any]) -> ResultadoPesquisa | None:
         disponibilidade=str(disponibilidade) if disponibilidade else None,
         canal_verificado=verificado,
         thumbnail=thumbnail,
+        tipo=tipo,
+        quantidade=quantidade,
     )
 
 

@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-11-17 — A pesquisa é dentro do programa: vídeos **e** playlists
+
+Pedido do usuário: *"o yt-dlp tem que pesquisar vídeos e playlist e mostrar lá,
+a pesquisa é feita no próprio baixador, por acaso eu tenho que ficar colando
+links?"* — razão: playlists só apareciam se ele colasse a URL.
+
+### Mudado
+
+- A busca da aba **Baixar** agora traz **vídeos, playlists e canais juntos**,
+  com coluna **Tipo** (*Vídeo*, *Playlist (42 vídeos)*, *Canal*), **Enter para
+  pesquisar** e filtro *Tudo / Só vídeos / Só playlists*.
+- A busca nativa do yt-dlp (`ytsearch`) só devolve vídeos; para playlists usamos
+  a página de resultados do YouTube com o filtro de playlist (`sp=EgIQAw`), que
+  o próprio extrator do yt-dlp interpreta. Em *Tudo* as duas buscas rodam em
+  paralelo e são mescladas **sem duplicar**; se uma falhar, a outra ainda
+  entrega resultados.
+- Na aba **Lote / Playlist** existe um campo **Pesquisar playlists**: digite o
+  nome, escolha na lista (com contagem de vídeos) e clique em **Listar itens**.
+  A URL passou a ser opcional (*Ou a URL da playlist*).
+- Novo botão **Abrir playlist** na aba Baixar: pega a playlist do resultado da
+  pesquisa, leva para a aba de itens e já lista as faixas. Também há **Usar a URL
+  deste resultado**, para quem preferir o campo de download.
+- O parâmetro ``tipo`` é retrocompatível: ``pesquisar(consulta)`` continua
+  funcionando (padrão ``tudo``).
+
+### Testes
+
+- 258 testes (+15): `tests/test_pesquisa_playlists.py` cobre comando por tipo,
+  filtro de playlist, acentos, mesclagem sem duplicar, fallback quando uma das
+  buscas falha e classificação de vídeo/playlist/canal; a interface é exercitada
+  com Tk simulado (pesquisar, abrir playlist sem link, pesquisar playlists na aba
+  Lote e usar a URL do resultado).
+
 ## 2026-11-17 — Playlist com seleção, lote e manutenção pela interface
 
 Pedido do usuário: *"poder baixar playlist, selecionar vários vídeos e outras

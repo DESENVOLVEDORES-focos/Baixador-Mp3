@@ -1,4 +1,35 @@
 
+## 2026-11-17 (2) — Pesquisa dentro do programa: vídeos e playlists
+
+### Defeito de produto (não de código)
+- O `pesquisar()` existia e funcionava, mas a busca só listava **vídeos**: o
+  `ytsearch` do yt-dlp não devolve playlists. Resultado prático: para baixar uma
+  playlist o usuário tinha que achar a URL no navegador e colar — exatamente o
+  que ele reclamou.
+
+### Correção
+- `pesquisa.py`: `construir_comando(consulta, limite, tipo)` com três alvos —
+  `ytsearchN:` (vídeos), `youtube.com/results?search_query=…&sp=EgIQAw` (playlists,
+  filtro que o extrator `youtube:search_url` reconhece) e a página de resultados
+  sem filtro (`tudo`, devolve vídeos + playlists + canais).
+- `pesquisar()` em `tudo` roda as duas buscas em `ThreadPoolExecutor(2)`, mescla
+  priorizando vídeos e depois playlists/canais, remove duplicados por id e
+  **tolera falha de uma das buscas** (a outra ainda entrega).
+- `ResultadoPesquisa` ganhou `tipo`, `quantidade`, `eh_playlist` e
+  `tipo_legivel`, sempre a partir de evidência do extrator (`_type`, `ie_key`,
+  URL) — nada de adivinhar pelo título.
+- Interface: coluna **Tipo**, Enter para pesquisar, filtro de tipo, botão
+  **Abrir playlist** (leva o resultado para a aba de itens e já lista),
+  **Usar a URL deste resultado**, e o campo **Pesquisar playlists** na aba Lote
+  (a URL virou opcional).
+
+### Limite do sandbox (honestidade)
+- YouTube é bloqueado aqui (TLS/SSL), então a busca real não pôde ser executada:
+  o que foi verificado foi o **comando** (URLs e filtros corretos, `sp` lido
+  pelo `parse_qs`), o extrator reconhecendo as URLs (`YoutubeSearchURLIE`), a
+  mesclagem e a interface com Tk simulado. O teste no YouTube de verdade é o do
+  usuário, no Windows.
+
 ## 2026-11-17 — Playlist, lote e manutenção (pedido "baixar playlist e vários vídeos")
 
 ### Auditoria que motivou o trabalho

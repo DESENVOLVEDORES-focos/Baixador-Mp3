@@ -324,6 +324,76 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         self.assertIn("https://127.0.0.1:1/a.mp3", urls)
         self.assertNotIn("https://127.0.0.1:1/b.mp3", urls)
 
+    def test_pesquisa_mostra_tipo_e_permite_abrir_playlist_sem_link(self):
+        from pesquisa import ResultadoPesquisa
+        from playlist import ItemPlaylist, Playlist
+
+        video = ResultadoPesquisa("a", "Música", "Canal", 200,
+                                  "https://youtu.be/a", tipo="video")
+        lista = ResultadoPesquisa(
+            "PL1", "Rock Mix", "Canal X", None,
+            "https://www.youtube.com/playlist?list=PL1", tipo="playlist",
+            quantidade=42)
+        with patch.object(self.controlador, "pesquisar",
+                          return_value=[video, lista]), \
+                patch.object(self.app, "_executar",
+                             side_effect=lambda trabalho, concluir, falhar=None:
+                             concluir(trabalho())):
+            self.app.busca_var.set("rock mix")
+            self.app._ao_pesquisar()
+        linhas = [self.app.resultados_tree.item(i, "values")
+                  for i in self.app.resultados_tree.get_children()]
+        self.assertEqual(linhas[0][1], "Vídeo")
+        self.assertIn("Playlist", linhas[1][1])
+        self.assertIn("playlist", self.app.status_var.get().lower())
+
+        # Abrir a playlist do resultado não exige colar link nenhum.
+        self.app.resultados_tree.selection_set([
+            self.app.resultados_tree.get_children()[1]])
+        montada = Playlist(titulo="Rock Mix", url=lista.url, itens=(
+            ItemPlaylist(1, "a", "Faixa 1", "https://youtu.be/a", 200),))
+        with patch.object(self.controlador, "listar_playlist",
+                          return_value=montada) as listar, \
+                patch.object(self.app, "_executar",
+                             side_effect=lambda trabalho, concluir, falhar=None:
+                             concluir(trabalho())):
+            self.app._ao_abrir_playlist_do_resultado()
+        self.assertEqual(listar.call_args[0][0], lista.url)
+        self.assertEqual(len(self.app.lote_tree.get_children()), 1)
+
+    def test_aba_lote_pesquisa_playlists_sem_colar_url(self):
+        from pesquisa import ResultadoPesquisa
+
+        lista = ResultadoPesquisa(
+            "PL9", "MPB Mix", "Canal Y", None,
+            "https://www.youtube.com/playlist?list=PL9", tipo="playlist",
+            quantidade=12)
+        with patch.object(self.controlador, "pesquisar", return_value=[lista]), \
+                patch.object(self.app, "_executar",
+                             side_effect=lambda trabalho, concluir, falhar=None:
+                             concluir(trabalho())):
+            self.app.lote_busca_var.set("mpb")
+            self.app._ao_pesquisar_playlists()
+        linhas = [self.app.playlists_tree.item(i, "values")
+                  for i in self.app.playlists_tree.get_children()]
+        self.assertEqual(linhas[0][0], "MPB Mix")
+        self.assertEqual(linhas[0][2], 12)
+
+    def test_usar_url_do_resultado_preenche_o_campo_de_download(self):
+        from pesquisa import ResultadoPesquisa
+
+        video = ResultadoPesquisa("a", "Música", "Canal", 200,
+                                  "https://youtu.be/abc", tipo="video")
+        self.app._resultados = [video]
+        self.app.resultados_tree.delete(
+            *self.app.resultados_tree.get_children())
+        self.app.resultados_tree.insert(
+            "", "end", values=("Música", "Vídeo", "Canal", "3:20", "não"))
+        self.app.resultados_tree.selection_set(
+            [self.app.resultados_tree.get_children()[0]])
+        self.app._ao_usar_url_do_resultado()
+        self.assertEqual(self.app.url_var.get(), "https://youtu.be/abc")
+
     def test_rebaixar_do_historico_manda_a_url_original(self):
         self.app._historico_atual = [
             {"url": "https://y/x", "caminho": "C:/a.mp3"}]

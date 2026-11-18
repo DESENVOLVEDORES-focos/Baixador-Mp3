@@ -22,8 +22,10 @@ em <https://ffmpeg.org/download.html> e coloque `ffmpeg.exe` em `ferramentas\`.
 
 ## Como usar
 
-1. **Pesquisar**: digite o nome e clique em *Pesquisar*. Selecione o resultado
-   (a miniatura aparece ao selecionar).
+1. **Pesquisar**: digite o nome no campo de pesquisa e aperte **Enter** (ou
+   *Pesquisar*). A pesquisa é feita **dentro do programa** e traz **vídeos e
+   playlists** juntos — a coluna *Tipo* mostra o que é cada linha
+   (*Vídeo*, *Playlist (42 vídeos)*, *Canal*). **Não é preciso colar link.**
 2. **Formato**: escolha MP3 (música com capa e metadados) ou MP4 (vídeo).
 3. **Baixar**: o painel *Downloads* mostra **% , velocidade, tamanho e a etapa
    atual** (Baixando → Convertendo → Gravando metadados).
@@ -40,9 +42,14 @@ em <https://ffmpeg.org/download.html> e coloque `ffmpeg.exe` em `ferramentas\`.
 
 Serve para baixar uma **playlist inteira** ou **escolher só alguns vídeos** dela:
 
-1. Cole a URL da playlist/álbum/canal e clique em **Listar**. Nada é baixado
-   nessa etapa: aparece a lista com duração e situação de cada item (itens
-   privados/removidos são marcados e ficam fora).
+0. **Ache a playlist pelo nome**: digite na busca da própria aba e clique em
+   **Pesquisar playlists** (nada de link). Escolha uma na lista e clique em
+   **Listar itens** — ou, na aba *Baixar*, marque uma linha do tipo *Playlist* e
+   use **Abrir playlist**.
+1. Se você já tem a URL, também pode colá-la no campo *Ou a URL da playlist* e
+   clicar em **Listar itens**. Nada é baixado nessa etapa: aparece a lista com
+   duração e situação de cada item (itens privados/removidos são marcados e
+   ficam fora).
 2. Escolha o que baixar: **Ctrl+clique** / **Shift+clique**, ou
    **Selecionar tudo**, ou **"Marcar sem ao vivo/show"** (descarta de uma vez o
    que tem cara de gravação ao vivo, cover, versão estendida e remix).
