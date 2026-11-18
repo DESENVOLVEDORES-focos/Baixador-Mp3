@@ -25,8 +25,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
 
+      # Windows não expande "*.py" no shell: a lista é montada pelo próprio
+      # Python para o resultado ser idêntico nos dois sistemas.
       - name: Análise estática (pyflakes)
-        run: python -m pyflakes *.py tests/*.py
+        run: |
+          python -c "import glob,subprocess,sys; alvos=glob.glob('*.py')+glob.glob('tests/*.py'); sys.exit(subprocess.call([sys.executable,'-m','pyflakes',*alvos]))"
 
       - name: Compilação
         run: python -m compileall -q . -x '(\.git|ferramentas)'
