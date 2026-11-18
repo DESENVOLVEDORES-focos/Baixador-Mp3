@@ -197,3 +197,124 @@ class TestReprodutor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReprodutorAvancado(unittest.TestCase):
+    """Seek, estado persistido e retomada da última faixa."""
+
+    def setUp(self):
+        self.raiz = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.raiz, True)
+        self.config = Configuracoes(raiz=self.raiz,
+                                    diretorio_musicas=self.raiz / "Musicas")
+        self.config.musicas.mkdir(parents=True, exist_ok=True)
+        self.arquivo = self.config.musicas / "a.mp3"
+        ffmpeg = shutil.which("ffmpeg") or "/tmp/ff10/ffmpeg"
+        if Path(ffmpeg).is_file():
+            subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi",
+                            "-i", "sine=frequency=440:duration=5",
+                            "-c:a", "libmp3lame", str(self.arquivo)],
+                           capture_output=True, check=False)
+        if not self.arquivo.is_file():
+            self.skipTest("Sem FFmpeg")
+        self.comandos: list = []
+        self._original = modulo_reprodutor.localizar_ffplay
+        modulo_reprodutor.localizar_ffplay = lambda config=None: ["/usr/bin/ffplay"]
+
+    def tearDown(self):
+        modulo_reprodutor.localizar_ffplay = self._original
+
+    def _player(self) -> Reprodutor:
+        class Processo:
+            def poll(self):
+                return None
+
+            def terminate(self):
+                pass
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                pass
+
+        return Reprodutor(
+            self.config,
+            executar=lambda cmd, **kw: (self.comandos.append(cmd), Processo())[1])
+
+    def test_buscar_usa_ss_na_posicao_pedida(self):
+        player = self._player()
+        player.definir_fila([Faixa(str(self.arquivo), "A", duracao=5.0)])
+        player.tocar(0)
+        self.assertTrue(player.buscar(3.0))
+        comando = self.comandos[-1]
+        self.assertAlmostEqual(float(comando[comando.index("-ss") + 1]), 3.0,
+                               places=1)
+
+    def test_buscar_respeita_o_fim_da_faixa(self):
+        player = self._player()
+        player.definir_fila([Faixa(str(self.arquivo), "A", duracao=5.0)])
+        player.tocar(0)
+        player.buscar(999)
+        comando = self.comandos[-1]
+        self.assertLessEqual(float(comando[comando.index("-ss") + 1]), 5.0)
+
+    def test_avancar_e_voltar(self):
+        player = self._player()
+        player.definir_fila([Faixa(str(self.arquivo), "A", duracao=10.0)])
+        player.tocar(0)
+        player.avancar(4)
+        self.assertGreaterEqual(player.posicao, 3.9)
+        player.avancar(-10)
+        self.assertLess(player.posicao, 1.0)
+
+    def test_buscar_sem_faixa_devolve_false(self):
+        self.assertFalse(self._player().buscar(10))
+
+    def test_estado_persiste_e_volta_ao_abrir(self):
+        arquivo_estado = self.raiz / "player.json"
+        player = self._player()
+        player.usar_arquivo_estado(arquivo_estado)
+        player.definir_fila([Faixa(str(self.arquivo), "A", duracao=5.0)])
+        player.mudar_volume(42)
+        player.ciclo_repeticao()
+        player.alternar_aleatorio()
+        self.assertTrue(player.salvar_estado())
+
+        outro = self._player()
+        outro.usar_arquivo_estado(arquivo_estado)
+        dados = outro.carregar_estado()
+        self.assertEqual(outro.volume, 42)
+        self.assertEqual(outro.repeticao, "musica")
+        self.assertTrue(outro.aleatorio)
+        self.assertEqual(dados["ultima_faixa"], str(self.arquivo))
+        self.assertEqual(len(outro.fila), 1)
+
+    def test_tocar_ultima_retoma_a_faixa_anterior(self):
+        arquivo_estado = self.raiz / "player.json"
+        player = self._player()
+        player.usar_arquivo_estado(arquivo_estado)
+        player.definir_fila([Faixa(str(self.arquivo), "A")])
+        player.salvar_estado()
+
+        outro = self._player()
+        outro.usar_arquivo_estado(arquivo_estado)
+        outro.carregar_estado()
+        self.assertTrue(outro.tocar_ultima())
+        self.assertTrue(outro.tocando)
+
+    def test_estado_ignora_arquivo_que_nao_existe(self):
+        player = self._player()
+        player.usar_arquivo_estado(self.raiz / "nada.json")
+        self.assertEqual(player.carregar_estado(), {})
+        self.assertFalse(player.tocar_ultima())
+
+    def test_estado_corrompido_nao_derruba(self):
+        arquivo_estado = self.raiz / "player.json"
+        arquivo_estado.write_text("não é json", encoding="utf-8")
+        player = self._player()
+        player.usar_arquivo_estado(arquivo_estado)
+        self.assertEqual(player.carregar_estado(), {})
+
+    def test_salvar_sem_arquivo_configurado_nao_faz_nada(self):
+        self.assertFalse(self._player().salvar_estado())

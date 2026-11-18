@@ -49,6 +49,11 @@ class Central(ServicosBase):
         self.selecao = Selecao(self.config)
         self.reprodutor = Reprodutor(self.config)
         self.reprodutor.volume = int(getattr(self.preferencias, "volume_reprodutor", 80))
+        # Volume, repetição e última faixa sobrevivem ao fechamento.
+        try:
+            self.reprodutor.usar_arquivo_estado(self.config.dados / "player.json")
+        except Exception:
+            pass
         self.gerenciador = GerenciadorDownloads(
             self.aplicacao,
             simultaneos=getattr(self.preferencias, "downloads_simultaneos", 2),
@@ -250,6 +255,7 @@ class Central(ServicosBase):
         except Exception as erro:
             log.info("Não salvou a fila ao fechar: %s", erro)
         try:
+            self.reprodutor.salvar_estado()
             self.reprodutor.parar(silencioso=True)
         except Exception:
             pass

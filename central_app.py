@@ -120,7 +120,13 @@ class CentralApp:
         if getattr(prefs, "sincronizar_ao_abrir", True):
             threading.Thread(target=self._sincronizar_inicial, daemon=True).start()
         self.raiz.after(150, self._processar_eventos)
-        self.raiz.after(1000, self._verificar_fim_da_musica)
+        self._ligar_atalhos()
+        # Restaura volume/repetição/última faixa da sessão anterior.
+        try:
+            self.central.reprodutor.carregar_estado()
+            self.player_modo.set(self.central.reprodutor.descricao_repeticao())
+        except Exception:
+            pass
 
     # -- infraestrutura -----------------------------------------------------
     def _montar_estrutura(self) -> None:
@@ -2294,7 +2300,12 @@ class CentralApp:
         ttk.Label(info, textvariable=self.player_sub,
                   style="Cartao.TLabel").pack(anchor="w")
         self.player_progresso = ttk.Progressbar(info, mode="determinate", maximum=100)
-        self.player_progresso.pack(fill="x", pady=(4, 6), padx=(0, 8))
+        self.player_progresso.pack(fill="x", pady=(4, 2), padx=(0, 8))
+        # Clicar na barra pula para o ponto (seek) — o ffplay recomeça com -ss.
+        self.player_progresso.bind("<Button-1>", self._player_clicou_barra)
+        self.player_tempo = tk.StringVar(value="0:00 / 0:00")
+        ttk.Label(info, textvariable=self.player_tempo,
+                  style="Cartao.TLabel").pack(anchor="w", pady=(0, 4))
 
         controles = ttk.Frame(quadro, style="Cartao.TFrame")
         controles.pack(side="left", padx=6)
@@ -2357,9 +2368,58 @@ class CentralApp:
         self.player_modo.set(self.central.reprodutor.descricao_repeticao())
         self.definir_status(f"Modo de repetição: {modo}.")
 
+    def _em_campo_de_texto(self) -> bool:
+        """Não sequestrar a barra de espaço enquanto o usuário digita."""
+        try:
+            foco = self.raiz.focus_get()
+        except Exception:
+            return False
+        classe = foco.__class__.__name__.lower() if foco is not None else ""
+        return any(nome in classe for nome in ("entry", "text", "spinbox",
+                                               "combobox"))
+
+    def _atalho_espaco(self) -> None:
+        if self._em_campo_de_texto():
+            return
+        self._player_pausar()
+
+    def _player_pular(self, segundos: float) -> None:
+        if self.central.reprodutor.avancar(segundos):
+            self._atualizar_player()
+            self.definir_status(
+                f"Pulando {int(segundos):+d}s: {self.player_tempo.get()}")
+        else:
+            self.definir_status("Nada tocando para avançar.")
+
+    def _player_volume_passo(self, passo: int) -> None:
+        atual = int(self.central.reprodutor.volume) + passo
+        self.volume_var.set(max(0, min(100, atual)))
+        self._player_volume()
+
+    def _player_clicou_barra(self, evento: Any) -> None:
+        """Converte o clique em segundos e pede o seek ao reprodutor."""
+        faixa = self.central.reprodutor.atual
+        if faixa is None:
+            self.definir_status("Escolha uma música para poder avançar.")
+            return
+        total = float(faixa.duracao or 0)
+        if not total:
+            self.definir_status(
+                "Duração desconhecida nesta faixa: não dá para pular com precisão.")
+            return
+        try:
+            largura = max(1, int(self.player_progresso.winfo_width()))
+            fracao = max(0.0, min(1.0, float(evento.x) / largura))
+        except Exception:
+            return
+        if self.central.reprodutor.buscar(fracao * total):
+            self._atualizar_player()
+            self.definir_status(f"Indo para {self.player_tempo.get()}.")
+
     def _player_volume(self) -> None:
         try:
             self.central.reprodutor.mudar_volume(int(self.volume_var.get()))
+            self.central.reprodutor.salvar_estado()
         except Exception:
             pass
 
@@ -2370,6 +2430,16 @@ class CentralApp:
         if estado.get("pausado"):
             subtitulo = (subtitulo + " · pausado").strip(" ·")
         self.player_sub.set(subtitulo or "Escolha uma música na Biblioteca")
+        faixa = self.central.reprodutor.atual
+        total = float(faixa.duracao or 0) if faixa else 0.0
+        posicao = float(estado.get("posicao") or 0)
+        if total:
+            minutos, segundos = divmod(int(min(posicao, total)), 60)
+            total_min, total_seg = divmod(int(total), 60)
+            self.player_tempo.set(f"{minutos}:{segundos:02d} / "
+                                  f"{total_min}:{total_seg:02d}")
+        else:
+            self.player_tempo.set("duração desconhecida")
         caminho = estado.get("caminho")
         if caminho and estado.get("capa"):
             imagem = _miniatura(capa_da_musica(caminho), (56, 56))
@@ -2397,6 +2467,19 @@ class CentralApp:
             pass
         finally:
             self.raiz.after(1000, self._verificar_fim_da_musica)
+
+    def _ligar_atalhos(self) -> None:
+        """Atalhos globais do player (não roubam digitação em campos de texto)."""
+        for tecla, acao in (("<space>", self._atalho_espaco),
+                            ("<Control-Right>", lambda: self._player_pular(10)),
+                            ("<Control-Left>", lambda: self._player_pular(-10)),
+                            ("<Control-Up>", lambda: self._player_volume_passo(5)),
+                            ("<Control-Down>", lambda: self._player_volume_passo(-5)),
+                            ("<Control-n>", self._player_proxima),
+                            ("<Control-p>", self._player_anterior),
+                            ("<Control-l>", self._player_aleatorio),
+                            ("<Control-r>", self._player_repeticao)):
+            self.raiz.bind(tecla, lambda _e, acao=acao: acao())
 
 
 __all__ = ["CentralApp", "PAGINAS", "capa_da_musica"]

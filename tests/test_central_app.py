@@ -790,3 +790,80 @@ class TestFiltrosDaBibliotecaNaTela(unittest.TestCase):
             self.app._carregar_facetas()
         self.assertEqual(self.app.biblioteca_artista_var.get(),
                          "Todos os artistas")
+
+
+class TestPlayerNaTela(unittest.TestCase):
+    """Barra clicável, atalhos e tempo no player do rodapé."""
+
+    @classmethod
+    def setUpClass(cls):
+        TestCentralApp.setUpClass()
+        cls.app = TestCentralApp.app
+        cls.central = TestCentralApp.central
+        cls.modulo = TestCentralApp.modulo
+
+    @classmethod
+    def tearDownClass(cls):
+        TestCentralApp.tearDownClass()
+
+    def setUp(self):
+        from reprodutor import Faixa
+
+        self.central.reprodutor.definir_fila(
+            [Faixa("/tmp/x.mp3", "Faixa", "Artista", duracao=100.0)])
+
+    def test_tempo_aparece_formatado(self):
+        self.app._atualizar_player()
+        self.assertIn("/", self.app.player_tempo.get())
+        self.assertIn("1:40", self.app.player_tempo.get())
+
+    def test_clique_na_barra_pede_seek(self):
+        evento = type("E", (), {"x": 50})()
+        with patch.object(self.app.player_progresso, "winfo_width",
+                          return_value=100), \
+                patch.object(self.central.reprodutor, "buscar",
+                             return_value=True) as busca:
+            self.app._player_clicou_barra(evento)
+        busca.assert_called_once()
+        self.assertAlmostEqual(busca.call_args[0][0], 50.0, places=1)
+
+    def test_clique_sem_duracao_avisa_em_vez_de_fingir(self):
+        from reprodutor import Faixa
+
+        self.central.reprodutor.definir_fila([Faixa("/tmp/x.mp3", "Sem duração")])
+        evento = type("E", (), {"x": 10})()
+        self.app._player_clicou_barra(evento)
+        self.assertIn("desconhecida", self.app.status_var.get())
+
+    def test_atalho_de_espaco_nao_rouba_digitacao(self):
+        self.app.raiz.focus_get = lambda: type("Entry", (), {})()
+        with patch.object(self.app, "_player_pausar") as pausar:
+            self.app._atalho_espaco()
+        pausar.assert_not_called()
+
+    def test_atalho_de_espaco_pausa_fora_de_campo(self):
+        self.app.raiz.focus_get = lambda: None
+        with patch.object(self.app, "_player_pausar") as pausar:
+            self.app._atalho_espaco()
+        pausar.assert_called_once()
+
+    def test_pular_mostra_o_destino(self):
+        with patch.object(self.central.reprodutor, "avancar",
+                          return_value=True):
+            self.app._player_pular(10)
+        self.assertIn("Pulando", self.app.status_var.get())
+
+    def test_volume_por_atalho_respeita_limites(self):
+        self.central.reprodutor.volume = 98
+        self.app._player_volume_passo(10)
+        self.assertEqual(self.central.reprodutor.volume, 100)
+        self.central.reprodutor.volume = 2
+        self.app._player_volume_passo(-10)
+        self.assertEqual(self.central.reprodutor.volume, 0)
+
+    def test_atalhos_estao_ligados_na_janela(self):
+        registrados = []
+        self.app.raiz.bind = lambda tecla, *_a, **_k: registrados.append(tecla)
+        self.app._ligar_atalhos()
+        self.assertIn("<space>", registrados)
+        self.assertIn("<Control-Right>", registrados)

@@ -10,7 +10,9 @@ poder ser testado sem tela. A interface só desenha e chama ``tocar``/``pausar``
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import random
 import shutil
 import subprocess
@@ -104,6 +106,94 @@ class Reprodutor:
         self._iniciado_em = 0.0
         self._posicao_salva = 0.0
         self._historico: list[int] = []
+        # Arquivo de estado (volume, repetição, última faixa) — retomada amanhã.
+        self._arquivo_estado: Path | None = None
+
+    # -- persistência -------------------------------------------------------
+    def usar_arquivo_estado(self, caminho: str | Path) -> None:
+        self._arquivo_estado = Path(caminho)
+
+    def salvar_estado(self) -> bool:
+        """Grava o que faz diferença na próxima abertura (nada de segredo)."""
+        if self._arquivo_estado is None:
+            return False
+        faixa = self.atual
+        dados = {
+            "volume": self.volume,
+            "repeticao": self.repeticao,
+            "aleatorio": self.aleatorio,
+            "indice": self.indice,
+            "posicao": round(self._posicao_salva, 1),
+            "ultima_faixa": faixa.caminho if faixa else "",
+            "fila": [f.caminho for f in self.fila][:500],
+        }
+        try:
+            self._arquivo_estado.parent.mkdir(parents=True, exist_ok=True)
+            temporario = self._arquivo_estado.with_suffix(".tmp")
+            temporario.write_text(json.dumps(dados, ensure_ascii=False),
+                                  encoding="utf-8")
+            os.replace(temporario, self._arquivo_estado)
+            return True
+        except Exception as erro:
+            log.info("Estado do player não salvo: %s", erro)
+            return False
+
+    def carregar_estado(self) -> dict[str, Any]:
+        """Lê volume/repetição e devolve a fila anterior (sem tocar nada)."""
+        if self._arquivo_estado is None or not self._arquivo_estado.is_file():
+            return {}
+        try:
+            dados = json.loads(self._arquivo_estado.read_text(encoding="utf-8"))
+        except Exception as erro:
+            log.info("Estado do player ilegível: %s", erro)
+            return {}
+        if not isinstance(dados, dict):
+            return {}
+        with self._lock:
+            self.volume = max(0, min(100, int(dados.get("volume", self.volume))))
+            if dados.get("repeticao") in MODOS_REPETICAO:
+                self.repeticao = str(dados["repeticao"])
+            self.aleatorio = bool(dados.get("aleatorio", self.aleatorio))
+            caminhos = [c for c in dados.get("fila", [])
+                        if isinstance(c, str) and Path(c).is_file()]
+            if caminhos:
+                self.fila = [Faixa(caminho=c) for c in caminhos]
+                self.indice = min(max(0, int(dados.get("indice", 0))),
+                                  len(self.fila) - 1)
+                self.faixa_anterior = caminhos[self.indice]
+            self._posicao_salva = 0.0
+        return dados
+
+    def tocar_ultima(self) -> bool:
+        """Retoma a última faixa ouvida (posição do começo, de propósito)."""
+        caminho = getattr(self, "faixa_anterior", "")
+        if not caminho:
+            return False
+        indice = next((i for i, f in enumerate(self.fila)
+                       if f.caminho == caminho), None)
+        if indice is None:
+            return False
+        self._posicao_salva = 0.0
+        return self.tocar(indice)
+
+    # -- navegação por posição ---------------------------------------------
+    def buscar(self, segundos: float) -> bool:
+        """Pula para um ponto da faixa atual (a barra de progresso clicável)."""
+        with self._lock:
+            faixa = self.atual
+            if faixa is None:
+                return False
+            limite = float(faixa.duracao or 0)
+            destino = max(0.0, float(segundos))
+            if limite:
+                destino = min(destino, max(0.0, limite - 0.5))
+            self._posicao_salva = destino
+        if self.tocando or self.pausado:
+            return self._retomar()
+        return True
+
+    def avancar(self, segundos: float) -> bool:
+        return self.buscar(self.posicao + float(segundos))
 
     # -- utilitários --------------------------------------------------------
     def _avisar(self, evento: str) -> None:
