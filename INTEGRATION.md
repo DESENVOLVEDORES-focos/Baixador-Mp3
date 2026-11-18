@@ -35,7 +35,7 @@ Defina `BAIXADOR_METADATA_MODULE` com o nome importável de um módulo que expon
 
 ```powershell
 $env:BAIXADOR_METADATA_MODULE = "modulo_metadados"
-python musica.py download "https://..." --formato mp3
+python -m baixador.app.musica download "https://..." --formato mp3
 ```
 
 O módulo deve estar instalado ou no `PYTHONPATH`. Sem essa variável, o núcleo funciona normalmente e deixa o MP3 pronto para enriquecimento posterior. A interface também aceita injeção direta de um objeto `ProcessadorMetadados` em `AdaptadorMetadados`, útil para testes.

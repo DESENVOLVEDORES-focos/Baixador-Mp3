@@ -234,3 +234,45 @@ class TestIntegracao(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRaizDoProjeto(unittest.TestCase):
+    """A raiz não pode ser a pasta do módulo, e sim a do projeto.
+
+    Regressão real: ao mover os módulos para ``baixador/nucleo/``, ``raiz``
+    passou a apontar para dentro do pacote — o programa deixava de achar
+    ``ferramentas/ffmpeg.exe`` (que já existia) e criava ``Musicas/`` no lugar
+    errado. Este teste trava isso.
+    """
+
+    def test_raiz_e_a_pasta_do_projeto_e_nao_do_pacote(self):
+        from baixador.nucleo.configuracoes import Configuracoes
+
+        raiz = Configuracoes().raiz
+        self.assertTrue((raiz / "main.py").is_file(),
+                        f"raiz inesperada: {raiz}")
+        self.assertTrue((raiz / "baixador").is_dir())
+        self.assertNotEqual(raiz.name, "nucleo")
+
+    def test_pastas_derivam_da_raiz(self):
+        from baixador.nucleo.configuracoes import Configuracoes
+
+        config = Configuracoes()
+        self.assertEqual(config.musicas, config.raiz / "Musicas")
+        self.assertEqual(config.videos, config.raiz / "Videos")
+        self.assertEqual(config.ferramentas, config.raiz / "ferramentas")
+        self.assertEqual(config.dados, config.raiz / ".baixador")
+
+    def test_acha_o_ffmpeg_que_esta_na_pasta_ferramentas(self):
+        """Com ``ferramentas/ffmpeg`` presente, não pode dizer que não achou."""
+        import tempfile
+
+        from baixador.nucleo.configuracoes import Configuracoes
+
+        with tempfile.TemporaryDirectory() as pasta:
+            raiz = Path(pasta)
+            (raiz / "ferramentas").mkdir()
+            (raiz / "ferramentas" / "ffmpeg").write_bytes(b"x")
+            config = Configuracoes(raiz=raiz)
+            self.assertEqual(config.caminho_ffmpeg(),
+                             str(raiz / "ferramentas" / "ffmpeg"))

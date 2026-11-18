@@ -83,7 +83,7 @@ Nada disso exige editar arquivo nenhum.
 | "FFmpeg não encontrado" | Rode `configurar.bat` de novo com internet. |
 | "yt-dlp não encontrado" | Idem; ou `pip install yt-dlp`. |
 | Miniatura em branco | `python -m pip install Pillow`. |
-| Nada acontece ao abrir | Rode `configurar.bat`; se persistir, abra `python interface.py` numa janela de terminal para ver o erro. |
+| Nada acontece ao abrir | Rode `configurar.bat`; se persistir, abra `python main.py --classica` numa janela de terminal para ver o erro. |
 
 **Onde ficam os registros:** `.baixador\historico.jsonl` (sucessos),
 `.baixador\erros.jsonl` (falhas), `.baixador\preferencias.json` (configurações).
@@ -107,4 +107,4 @@ Nenhum deles deve ir para o GitHub.
   precisar de ajuste fino no seu monitor.
 - Se algo falhar no Windows, o mais útil é abrir **Mensagens** na própria
   janela (fica em `.baixador\app.log`) e, se precisar, a saída de
-  `python musica.py download "<URL>" --formato mp3` num terminal.
+  `python -m baixador.app.musica download "<URL>" --formato mp3` num terminal.

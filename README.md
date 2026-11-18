@@ -161,14 +161,14 @@ download:
 ## Linha de comando (opcional, mesmas funções)
 
 ```text
-python musica.py check
-python musica.py search "nome da música" --limite 10
-python musica.py search "nome da música" --selecionar
-python musica.py download "https://..." --formato mp3
-python musica.py download "https://..." --formato mp4
-python musica.py queue-add "https://..." --formato mp3
-python musica.py worker
-python musica.py gui
+python -m baixador.app.musica check
+python -m baixador.app.musica search "nome da música" --limite 10
+python -m baixador.app.musica search "nome da música" --selecionar
+python -m baixador.app.musica download "https://..." --formato mp3
+python -m baixador.app.musica download "https://..." --formato mp4
+python -m baixador.app.musica queue-add "https://..." --formato mp3
+python -m baixador.app.musica worker
+python -m baixador.app.musica gui
 ```
 
 O arquivo com a chave de IA também é aceito como `api.txt` na pasta do programa

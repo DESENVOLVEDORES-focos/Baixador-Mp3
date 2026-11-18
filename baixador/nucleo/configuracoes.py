@@ -19,7 +19,10 @@ class Configuracoes:
     original: ``Musicas/``, ``Videos/``, sem cookies e qualidade ``0``.
     """
 
-    raiz: Path = field(default_factory=lambda: Path(__file__).resolve().parent)
+    # O arquivo vive em ``baixador/nucleo/``; a raiz do projeto são duas pastas
+    # acima (onde ficam ``main.py``, ``ferramentas/``, ``Musicas/`` e os ``.bat``).
+    raiz: Path = field(
+        default_factory=lambda: Path(__file__).resolve().parents[2])
     diretorio_musicas: Path | None = None
     diretorio_videos: Path | None = None
     caminho_cookies: Path | None = None
@@ -117,17 +120,23 @@ class Configuracoes:
         )
 
     def caminho_ffmpeg(self) -> str:
-        """Localiza FFmpeg; yt-dlp usa o executável ou seu diretório."""
-        for nome in ("ffmpeg.exe", "ffmpeg"):
-            candidato = self.ferramentas / nome
-            if candidato.is_file():
-                return str(candidato)
+        """Localiza FFmpeg; yt-dlp usa o executável ou seu diretório.
+
+        Ordem: pastas ``ferramentas/`` e ``ferramentas/ffmpeg/`` (o pacote pode
+        trazer o FFmpeg pronto para não exigir download), depois o PATH.
+        """
+        pastas = (self.ferramentas, self.ferramentas / "ffmpeg")
+        for pasta in pastas:
+            for nome in ("ffmpeg.exe", "ffmpeg"):
+                candidato = pasta / nome
+                if candidato.is_file():
+                    return str(candidato)
         instalado = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
         if instalado:
             return instalado
         raise FileNotFoundError(
-            "FFmpeg não encontrado. Instale-o e adicione ao PATH, "
-            "ou coloque ffmpeg.exe na pasta ferramentas."
+            "FFmpeg não encontrado. Rode preparar_ferramentas.bat, instale o "
+            "FFmpeg no PATH ou coloque ffmpeg.exe na pasta ferramentas."
         )
 
     def verificar_dependencias(self, *, requer_ffmpeg: bool = True) -> dict[str, str]:
