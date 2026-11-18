@@ -158,8 +158,11 @@ class Aplicacao:
                     ao_item(posicao, total, url)
                 except Exception:
                     pass
-            ok, mensagem = self.baixar(
-                url, formato, ao_progresso=ao_progresso, politica=politica)
+            try:
+                ok, mensagem = self.baixar(
+                    url, formato, ao_progresso=ao_progresso, politica=politica)
+            except Exception as erro:  # um item quebrado não para o lote
+                ok, mensagem = False, f"Falha inesperada: {erro}"
             resumo.append((url, ok, mensagem))
         return resumo
 

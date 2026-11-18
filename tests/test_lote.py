@@ -149,22 +149,23 @@ class TestBaixarVarios(unittest.TestCase):
         self.assertEqual([ok for _u, ok, _m in resumo], [True, False, True])
         self.assertEqual(resumo[1][2], "vídeo privado")
 
-    def test_nao_para_no_primeiro_erro(self):
-        urls = ["https://youtu.be/a", "https://youtu.be/b"]
+    def test_excecao_num_item_nao_para_o_lote(self):
+        urls = ["https://youtu.be/a", "https://youtu.be/b", "https://youtu.be/c"]
         chamadas: list[str] = []
 
         def falso_baixar(url, formato, **kwargs):
             chamadas.append(url)
-            raise ErroDownload("falhou de propósito")
+            if url.endswith("/b"):
+                raise ErroDownload("falhou de propósito")
+            return True, "ok"
 
         from musica import Aplicacao
         aplicacao = Aplicacao.__new__(Aplicacao)
         aplicacao.baixar = falso_baixar  # type: ignore[assignment]
-        with self.assertRaises(ErroDownload):
-            Aplicacao.baixar_varios(aplicacao, urls, "mp3")
-        # O contrato atual: erro inesperado propaga; o lote trata os seus
-        # próprios erros por item (ver baixar_playlist).
-        self.assertEqual(chamadas, ["https://youtu.be/a"])
+        resumo = Aplicacao.baixar_varios(aplicacao, urls, "mp3")
+        self.assertEqual(chamadas, urls)
+        self.assertEqual([ok for _u, ok, _m in resumo], [True, False, True])
+        self.assertIn("falhou de propósito", resumo[1][2])
 
     def test_avisa_cada_item(self):
         from musica import Aplicacao
