@@ -611,6 +611,29 @@ class CentralApp:
             self.arvore_cesta.heading(coluna, text=titulo)
             self.arvore_cesta.column(coluna, width=largura)
         self.arvore_cesta.pack(fill="both", expand=True, padx=8)
+        filtro_cesta = ttk.Frame(cesta)
+        filtro_cesta.pack(fill="x", padx=8, pady=(4, 0))
+        ttk.Label(filtro_cesta, text="Procurar na cesta:",
+                  style="Fraco.TLabel").pack(side="left")
+        self.cesta_busca = tk.StringVar()
+        campo_cesta = ttk.Entry(filtro_cesta, textvariable=self.cesta_busca,
+                                width=28)
+        campo_cesta.pack(side="left", padx=6)
+        campo_cesta.bind("<KeyRelease>", lambda _e: self._atualizar_fila())
+        ttk.Button(filtro_cesta, text="Limpar busca",
+                   command=lambda: (self.cesta_busca.set(""),
+                                    self._atualizar_fila())).pack(side="left")
+        self.cesta_busca_dica = tk.StringVar(value="")
+        ttk.Label(filtro_cesta, textvariable=self.cesta_busca_dica,
+                  style="Fraco.TLabel").pack(side="left", padx=8)
+        ttk.Label(filtro_cesta, text="Formato dos marcados:",
+                  style="Fraco.TLabel").pack(side="left", padx=(12, 4))
+        self.cesta_formato = tk.StringVar(value="MP3")
+        ttk.Combobox(filtro_cesta, textvariable=self.cesta_formato, width=6,
+                     state="readonly", values=("MP3", "MP4")).pack(side="left")
+        ttk.Button(filtro_cesta, text="Aplicar",
+                   command=self._aplicar_formato_cesta).pack(side="left", padx=4)
+
         acoes_cesta = ttk.Frame(cesta)
         acoes_cesta.pack(fill="x", padx=8, pady=6)
         ttk.Button(acoes_cesta, text="Baixar tudo da cesta", style="Principal.TButton",
@@ -631,6 +654,26 @@ class CentralApp:
                    command=self._desfazer_remocao_cesta).pack(side="left", padx=4)
         ttk.Button(acoes_cesta, text="Salvar cesta como playlist",
                    command=self._salvar_cesta_como_playlist).pack(side="left")
+
+    def _aplicar_formato_cesta(self) -> None:
+        """Troca MP3↔MP4 dos itens marcados (ou de toda a cesta)."""
+        formato = str(self.cesta_formato.get()).strip().lower() or "mp3"
+        escolhas = self.arvore_cesta.selection()
+        itens = self.central.selecao.listar()
+        if escolhas:
+            urls = [itens[int(str(iid))].url for iid in escolhas
+                    if 0 <= int(str(iid)) < len(itens)]
+        else:
+            urls = [item.url for item in itens]
+        if not urls:
+            self.notificar("Cesta", "A cesta está vazia.", erro=True)
+            return
+        mudados = self.central.selecao.definir_formato(urls, formato)
+        self._atualizar_fila()
+        self.definir_status(
+            f"{mudados} item(ns) marcados como {formato.upper()}"
+            + ("" if escolhas else " (cesta inteira: nenhum item estava marcado)")
+            + ".")
 
     def _iniciar_downloads(self) -> None:
         quantidade = self.central.iniciar_downloads()
@@ -823,8 +866,25 @@ class CentralApp:
                     + "  ·  da sessão anterior: " + ", ".join(partes))
         for item in self.arvore_cesta.get_children():
             self.arvore_cesta.delete(item)
-        itens = self.central.selecao.listar()
-        for posicao, entrada in enumerate(itens):
+        todos = self.central.selecao.listar()
+        texto_busca = ""
+        try:
+            texto_busca = str(self.cesta_busca.get()).strip()
+        except Exception:
+            texto_busca = ""
+        if texto_busca:
+            # O índice é o da cesta completa: remover/subir continua correto.
+            indices = {id(item): posicao for posicao, item in enumerate(todos)}
+            itens = self.central.selecao.pesquisar(texto_busca)
+            self.cesta_busca_dica.set(
+                f"{len(itens)} de {len(todos)} item(ns) casam com "
+                f"\"{texto_busca}\" (os botões valem só para os visíveis).")
+        else:
+            indices = {}
+            itens = todos
+            self.cesta_busca_dica.set("")
+        for entrada in itens:
+            posicao = indices.get(id(entrada), todos.index(entrada))
             self.arvore_cesta.insert("", "end", iid=str(posicao), values=(
                 entrada.titulo_exibicao, entrada.origem or "Pesquisa",
                 entrada.duracao_formatada, entrada.formato.upper()))
@@ -840,7 +900,7 @@ class CentralApp:
             f"~{tamanho_legivel(bytes_)} de download"
             + (f" · {repetidas} já na biblioteca" if repetidas else ""))
         self.cesta_var.set(
-            (f"Cesta: {len(itens)} música(s) · "
+            (f"Cesta: {len(todos)} música(s) · "
              f"{self.central.selecao.duracao_formatada()}"
              + (f" · {resumo_cesta}" if resumo_cesta else ""))
             if itens else "Cesta vazia — pesquise e clique em \"Adicionar à cesta\".")

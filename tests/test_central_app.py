@@ -1115,3 +1115,104 @@ class TestDetalhesDoResultado(unittest.TestCase):
 def _texto_do_widget(widget) -> str:
     """Texto atual de um rótulo dublê (``configure(text=...)``)."""
     return str(widget.opcoes.get("text", ""))
+
+
+class TestBuscaEFormatoNaCesta(unittest.TestCase):
+    """Achar um item no meio de 200 e trocar formato em lote."""
+
+    @classmethod
+    def setUpClass(cls):
+        TestCentralApp.setUpClass()
+        cls.app = TestCentralApp.app
+        cls.central = TestCentralApp.central
+
+    @classmethod
+    def tearDownClass(cls):
+        TestCentralApp.tearDownClass()
+
+    def setUp(self):
+        from selecao import ItemSelecao
+
+        self.central.selecao.limpar()
+        self.central.selecao.adicionar_varios([
+            ItemSelecao(titulo="Tempo Perdido", canal="Legião Urbana",
+                        url="https://y/1", origem="Pesquisa: legião",
+                        duracao=320),
+            ItemSelecao(titulo="Que País É Este", canal="Legião Urbana",
+                        url="https://y/2", origem="Playlist: rock"),
+            ItemSelecao(titulo="Sweet Child O' Mine", canal="Guns N' Roses",
+                        url="https://y/3", origem="Playlist: rock"),
+        ])
+        self.app.mostrar("fila")
+        self.app._atualizar_fila()
+
+    def _linhas(self):
+        return [self.app.arvore_cesta.item(i)["values"]
+                for i in self.app.arvore_cesta.get_children()]
+
+    def test_sem_busca_mostra_tudo(self):
+        self.app.cesta_busca.set("")
+        self.app._atualizar_fila()
+        self.assertEqual(len(self._linhas()), 3)
+
+    def test_busca_por_titulo_filtra(self):
+        self.app.cesta_busca.set("tempo perdido")
+        self.app._atualizar_fila()
+        linhas = self._linhas()
+        self.assertEqual(len(linhas), 1)
+        self.assertIn("Tempo Perdido", linhas[0][0])
+        self.assertIn("1 de 3", self.app.cesta_busca_dica.get())
+
+    def test_busca_por_canal_filtra(self):
+        self.app.cesta_busca.set("legião")
+        self.app._atualizar_fila()
+        self.assertEqual(len(self._linhas()), 2)
+
+    def test_busca_sem_resultado_avisa(self):
+        self.app.cesta_busca.set("nada a ver")
+        self.app._atualizar_fila()
+        self.assertEqual(self._linhas(), [])
+        self.assertIn("0 de 3", self.app.cesta_busca_dica.get())
+
+    def test_indice_continua_correto_com_busca_ativa(self):
+        """Com filtro, remover o item visível tem de remover o item certo."""
+        self.app.cesta_busca.set("sweet")
+        self.app._atualizar_fila()
+        visiveis = self.app.arvore_cesta.get_children()
+        self.assertEqual(len(visiveis), 1)
+        urls_restantes = [i.url for i in self.central.selecao.listar()]
+        self.assertIn("https://y/3", urls_restantes)  # é o que está na tela
+        self.central.selecao.remover_indices([int(str(visiveis[0]))])
+        restantes = [i.url for i in self.central.selecao.listar()]
+        self.assertEqual(sorted(restantes), ["https://y/1", "https://y/2"])
+
+    def test_formato_em_lote_sem_marcar_vale_para_toda_a_cesta(self):
+        self.app.arvore_cesta.selection_remove(
+            self.app.arvore_cesta.selection())
+        self.app.cesta_formato.set("MP4")
+        self.app._aplicar_formato_cesta()
+        self.assertEqual({i.formato for i in self.central.selecao.listar()},
+                         {"mp4"})
+        self.assertIn("cesta inteira", self.app.status_var.get())
+
+    def test_formato_em_lote_so_nos_marcados(self):
+        self.app.cesta_busca.set("")
+        self.app._atualizar_fila()
+        self.app.arvore_cesta.selection_set("1")
+        self.app.cesta_formato.set("MP4")
+        self.app._aplicar_formato_cesta()
+        formatos = {i.url: i.formato for i in self.central.selecao.listar()}
+        self.assertEqual(formatos["https://y/2"], "mp4")
+        self.assertEqual(formatos["https://y/1"], "mp3")
+
+    def test_formato_em_cesta_vazia_avisa(self):
+        self.central.selecao.limpar()
+        self.app._atualizar_fila()
+        with patch.object(self.app, "notificar") as notificar:
+            self.app._aplicar_formato_cesta()
+        self.assertIn("vazia", notificar.call_args[0][1])
+
+    def test_resumo_mostra_total_mesmo_com_busca(self):
+        self.app.cesta_busca.set("tempo")
+        self.app._atualizar_fila()
+        self.assertIn("3 música(s)", self.app.cesta_var.get())
