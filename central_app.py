@@ -850,6 +850,53 @@ class CentralApp:
         ttk.Button(filtros, text="Reindexar pasta",
                    command=self._reindexar).pack(side="left")
 
+        detalhados = ttk.Frame(area)
+        detalhados.pack(fill="x", pady=(0, 6))
+        self.biblioteca_artista_var = tk.StringVar(value="Todos os artistas")
+        self.biblioteca_album_var = tk.StringVar(value="Todos os álbuns")
+        self.biblioteca_genero_var = tk.StringVar(value="Todos os gêneros")
+        self.biblioteca_ano_var = tk.StringVar(value="Todos os anos")
+        self.biblioteca_duracao_var = tk.StringVar(value="Qualquer duração")
+        self.biblioteca_sem_capa_var = tk.BooleanVar(value=False)
+        self.biblioteca_recentes_var = tk.BooleanVar(value=False)
+        # menu -> (variável, faceta, rótulo neutro). Guardado para receber os
+        # valores reais do banco em ``_carregar_facetas``.
+        self._combos_facetas: list[tuple[Any, str, str, str]] = []
+        combos = (
+            (self.biblioteca_artista_var, 22, "artistas", "Todos os artistas"),
+            (self.biblioteca_album_var, 20, "albuns", "Todos os álbuns"),
+            (self.biblioteca_genero_var, 14, "generos", "Todos os gêneros"),
+            (self.biblioteca_ano_var, 8, "anos", "Todos os anos"),
+        )
+        for variavel, largura, faceta, neutro in combos:
+            caixa = ttk.Combobox(detalhados, textvariable=variavel,
+                                 width=largura, state="readonly",
+                                 values=(neutro,))
+            caixa.pack(side="left", padx=(0, 6))
+            caixa.bind("<<ComboboxSelected>>",
+                       lambda _e: self._atualizar_biblioteca())
+            self._combos_facetas.append((caixa, faceta, neutro, variavel))
+        ttk.Combobox(detalhados, textvariable=self.biblioteca_duracao_var,
+                     width=16, state="readonly",
+                     values=("Qualquer duração", "Até 3 min", "3 a 6 min",
+                             "6 a 10 min", "Mais de 10 min")).pack(
+            side="left", padx=(0, 6))
+        ttk.Checkbutton(detalhados, text="Sem capa",
+                        variable=self.biblioteca_sem_capa_var,
+                        command=self._atualizar_biblioteca).pack(side="left")
+        ttk.Checkbutton(detalhados, text="Últimos 7 dias",
+                        variable=self.biblioteca_recentes_var,
+                        command=self._atualizar_biblioteca).pack(side="left", padx=6)
+        ttk.Button(detalhados, text="Limpar filtros",
+                   command=self._limpar_filtros_biblioteca).pack(side="left")
+
+        self.biblioteca_resumo_var = tk.StringVar(value="")
+        ttk.Label(area, textvariable=self.biblioteca_resumo_var,
+                  style="Fraco.TLabel").pack(anchor="w", pady=(0, 4))
+        self.biblioteca_vazia_var = tk.StringVar(value="")
+        ttk.Label(area, textvariable=self.biblioteca_vazia_var,
+                  style="Dica.TLabel").pack(anchor="w", pady=(0, 4))
+
         corpo = ttk.Frame(area)
         corpo.pack(fill="both", expand=True)
         self.arvore_biblioteca = ttk.Treeview(
@@ -904,10 +951,22 @@ class CentralApp:
                   "Ano": "ano", "Gênero": "genero", "Adicionada": "adicionada",
                   "Duração": "duracao"}
         ordem = ordens.get(self.biblioteca_ordem_var.get(), "titulo")
+        faixas = {"Até 3 min": (0, 180), "3 a 6 min": (180, 360),
+                  "6 a 10 min": (360, 600), "Mais de 10 min": (600, 0)}
+        duracao_min, duracao_max = faixas.get(
+            self.biblioteca_duracao_var.get(), (0, 0))
         musicas = self.central.musicas(
             texto=self.biblioteca_busca_var.get().strip(), ordenar=ordem,
-            somente_favoritos=bool(self.biblioteca_favoritos_var.get()))
+            somente_favoritos=bool(self.biblioteca_favoritos_var.get()),
+            artista=self._valor_filtro(self.biblioteca_artista_var),
+            album=self._valor_filtro(self.biblioteca_album_var),
+            genero=self._valor_filtro(self.biblioteca_genero_var),
+            ano=self._valor_filtro(self.biblioteca_ano_var),
+            sem_capa=bool(self.biblioteca_sem_capa_var.get()),
+            dias=7 if self.biblioteca_recentes_var.get() else 0,
+            duracao_min=duracao_min, duracao_max=duracao_max)
         self._musicas_biblioteca = musicas
+        self._carregar_facetas()
         for item in self.arvore_biblioteca.get_children():
             self.arvore_biblioteca.delete(item)
         for musica in musicas:
@@ -916,7 +975,60 @@ class CentralApp:
                 musica.artista or "—", musica.album or "—", musica.ano or "—",
                 musica.genero or "—", musica.duracao_formatada,
                 "sim" if musica.tem_capa else "não"))
+        total = self.central.biblioteca.contar()
+        segundos = sum(m.duracao or 0 for m in musicas)
+        from limites import tempo_legivel
+
+        self.biblioteca_resumo_var.set(
+            f"{len(musicas)} de {total} música(s) · {tempo_legivel(int(segundos))}"
+            + (" (filtro ativo)" if len(musicas) != total else ""))
+        if not musicas and not total:
+            self.biblioteca_vazia_var.set(
+                "Biblioteca vazia: clique em \"Reindexar pasta\" para ler os MP3 "
+                "da pasta de músicas, ou baixe algo na página Pesquisar.")
+        elif not musicas:
+            self.biblioteca_vazia_var.set(
+                "Nenhuma música com esses filtros. Use \"Limpar filtros\".")
+        else:
+            self.biblioteca_vazia_var.set("")
         self.definir_status(f"{len(musicas)} música(s) na biblioteca.")
+
+    @staticmethod
+    def _valor_filtro(variavel: Any) -> str:
+        """Traduz "Todos os artistas"/"Todos" em "sem filtro"."""
+        valor = str(variavel.get() or "").strip()
+        return "" if valor.lower().startswith(("todos", "qualquer")) else valor
+
+    def _carregar_facetas(self) -> None:
+        """Preenche os menus de filtro com o que existe no banco (com contagem)."""
+        try:
+            facetas = self.central.biblioteca.facetas()
+        except Exception as erro:
+            log.info("Facetas indisponíveis: %s", erro)
+            return
+
+        for caixa, faceta, neutro, _variavel in getattr(self, "_combos_facetas", []):
+            opcoes = (neutro,) + tuple(
+                f"{item['valor']} ({item['total']})"
+                for item in facetas.get(faceta, []))
+            caixa.configure(values=opcoes)
+            # Se o filtro atual deixou de existir, volta para o neutro.
+            atual = str(_variavel.get())
+            if atual != neutro and atual not in opcoes:
+                _variavel.set(neutro)
+
+    def _limpar_filtros_biblioteca(self) -> None:
+        """Volta a biblioteca ao estado neutro (um clique)."""
+        self.biblioteca_busca_var.set("")
+        self.biblioteca_artista_var.set("Todos os artistas")
+        self.biblioteca_album_var.set("Todos os álbuns")
+        self.biblioteca_genero_var.set("Todos os gêneros")
+        self.biblioteca_ano_var.set("Todos os anos")
+        self.biblioteca_duracao_var.set("Qualquer duração")
+        self.biblioteca_sem_capa_var.set(False)
+        self.biblioteca_recentes_var.set(False)
+        self.biblioteca_favoritos_var.set(False)
+        self._atualizar_biblioteca()
 
     def _reindexar(self) -> None:
         self.definir_status("Lendo as pastas e as tags dos arquivos...")

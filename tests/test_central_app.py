@@ -683,3 +683,110 @@ class TestCestaAvancadaNaTela(unittest.TestCase):
         self.assertEqual(playlist["total"], 1)
         self.central.excluir_playlist(playlist["id"])
         self.central.biblioteca.remover(musica.id, apagar_arquivo=True)
+
+
+class TestFiltrosDaBibliotecaNaTela(unittest.TestCase):
+    """Cada filtro da Biblioteca muda o que aparece — nada de campo decorativo."""
+
+    @classmethod
+    def setUpClass(cls):
+        TestCentralApp.setUpClass()
+        cls.app = TestCentralApp.app
+        cls.central = TestCentralApp.central
+
+    @classmethod
+    def tearDownClass(cls):
+        TestCentralApp.tearDownClass()
+
+    def setUp(self):
+        self.app.mostrar("biblioteca")
+
+    def test_filtros_de_duracao_chegam_na_consulta(self):
+        capturado = {}
+
+        def falso(**filtros):
+            capturado.update(filtros)
+            return []
+
+        with patch.object(self.central, "musicas", side_effect=falso):
+            self.app.biblioteca_duracao_var.set("3 a 6 min")
+            self.app._atualizar_biblioteca()
+        self.assertEqual(capturado["duracao_min"], 180)
+        self.assertEqual(capturado["duracao_max"], 360)
+
+    def test_filtro_sem_capa_e_recentes(self):
+        capturado = {}
+
+        def falso(**filtros):
+            capturado.update(filtros)
+            return []
+
+        with patch.object(self.central, "musicas", side_effect=falso):
+            self.app.biblioteca_sem_capa_var.set(True)
+            self.app.biblioteca_recentes_var.set(True)
+            self.app._atualizar_biblioteca()
+        self.assertTrue(capturado["sem_capa"])
+        self.assertEqual(capturado["dias"], 7)
+
+    def test_valor_neutro_nao_vira_filtro(self):
+        capturado = {}
+
+        def falso(**filtros):
+            capturado.update(filtros)
+            return []
+
+        with patch.object(self.central, "musicas", side_effect=falso):
+            self.app.biblioteca_artista_var.set("Todos os artistas")
+            self.app._atualizar_biblioteca()
+        self.assertEqual(capturado["artista"], "")
+
+    def test_limpar_filtros_volta_ao_neutro(self):
+        self.app.biblioteca_busca_var.set("rock")
+        self.app.biblioteca_sem_capa_var.set(True)
+        self.app.biblioteca_duracao_var.set("Até 3 min")
+        self.app.biblioteca_artista_var.set("Queen (2)")
+        self.app._limpar_filtros_biblioteca()
+        self.assertEqual(self.app.biblioteca_busca_var.get(), "")
+        self.assertFalse(self.app.biblioteca_sem_capa_var.get())
+        self.assertEqual(self.app.biblioteca_duracao_var.get(), "Qualquer duração")
+        self.assertEqual(self.app.biblioteca_artista_var.get(), "Todos os artistas")
+
+    def test_estado_vazio_orienta_o_proximo_passo(self):
+        with patch.object(self.central, "musicas", return_value=[]), \
+                patch.object(self.central.biblioteca, "contar", return_value=0):
+            self.app._atualizar_biblioteca()
+        self.assertIn("Reindexar", self.app.biblioteca_vazia_var.get())
+
+    def test_filtro_sem_resultado_sugere_limpar(self):
+        with patch.object(self.central, "musicas", return_value=[]), \
+                patch.object(self.central.biblioteca, "contar", return_value=5):
+            self.app._atualizar_biblioteca()
+        self.assertIn("Limpar filtros", self.app.biblioteca_vazia_var.get())
+
+    def test_resumo_mostra_filtrado_de_total(self):
+        with patch.object(self.central, "musicas", return_value=[]), \
+                patch.object(self.central.biblioteca, "contar", return_value=9):
+            self.app._atualizar_biblioteca()
+        self.assertIn("0 de 9", self.app.biblioteca_resumo_var.get())
+
+    def test_facetas_preenchem_os_menus(self):
+        facetas = {"artistas": [{"valor": "Queen", "total": 3}],
+                   "albuns": [{"valor": "Opera", "total": 2}],
+                   "generos": [{"valor": "Rock", "total": 5}],
+                   "anos": [{"valor": "1975", "total": 1}]}
+        with patch.object(self.central.biblioteca, "facetas",
+                          return_value=facetas):
+            self.app._carregar_facetas()
+        # o widget dublê guarda os valores recebidos em ``configure``
+        textos = [str(w.kwargs) + str(w.opcoes) for w in _widgets_criados]
+        self.assertTrue(any("Queen (3)" in texto for texto in textos))
+        self.assertTrue(any("1975 (1)" in texto for texto in textos))
+
+    def test_faceta_antiga_que_sumiu_volta_para_neutro(self):
+        self.app.biblioteca_artista_var.set("Artista Que Sumiu (1)")
+        with patch.object(self.central.biblioteca, "facetas",
+                          return_value={"artistas": [], "albuns": [],
+                                        "generos": [], "anos": []}):
+            self.app._carregar_facetas()
+        self.assertEqual(self.app.biblioteca_artista_var.get(),
+                         "Todos os artistas")

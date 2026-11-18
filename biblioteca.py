@@ -22,7 +22,7 @@ import threading
 import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -39,6 +39,10 @@ ORDENACOES = {
     "genero": "genero COLLATE NOCASE, artista COLLATE NOCASE",
     "adicionada": "adicionada_em DESC",
     "duracao": "duracao DESC",
+    "duracao_curta": "duracao ASC",
+    "recentes": "adicionada_em DESC",
+    "favoritos": "favorito DESC, titulo COLLATE NOCASE",
+    "artista_ano": "artista COLLATE NOCASE, ano DESC, titulo COLLATE NOCASE",
 }
 
 _ESQUEMA = """
@@ -100,6 +104,12 @@ CREATE TABLE IF NOT EXISTS pesquisas (
 
 def agora() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _dias_atras(dias: int) -> str:
+    """Data ISO de ``dias`` atrás (usada no filtro "adicionadas nos últimos N")."""
+    momento = datetime.now(timezone.utc) - timedelta(days=max(0, int(dias)))
+    return momento.isoformat()
 
 
 def chave_busca(texto: str) -> str:
@@ -296,6 +306,9 @@ class Biblioteca:
     def listar(self, *, ordenar: str = "titulo", texto: str = "",
                artista: str = "", album: str = "", genero: str = "",
                somente_favoritos: bool = False, limite: int | None = None,
+               ano: str = "", sem_capa: bool = False,
+               sem_metadados: bool = False, dias: int = 0,
+               duracao_min: int = 0, duracao_max: int = 0,
                ) -> list[Musica]:
         """Lista com busca tolerante a acento e filtros combináveis."""
         ordenacao = ORDENACOES.get(ordenar, ORDENACOES["titulo"])
@@ -317,6 +330,23 @@ class Biblioteca:
             valores.append(f"%{genero}%")
         if somente_favoritos:
             partes.append("favorito = 1")
+        if ano:
+            partes.append("ano = ?")
+            valores.append(str(ano))
+        if sem_capa:
+            partes.append("tem_capa = 0")
+        if sem_metadados:
+            partes.append("(artista = '' OR album = '' OR artista IS NULL"
+                          " OR album IS NULL)")
+        if dias:
+            partes.append("adicionada_em >= ?")
+            valores.append(_dias_atras(int(dias)))
+        if duracao_min:
+            partes.append("duracao >= ?")
+            valores.append(int(duracao_min))
+        if duracao_max:
+            partes.append("duracao <= ?")
+            valores.append(int(duracao_max))
         consulta = ("SELECT * FROM musicas WHERE "
                     f"{' AND '.join(partes)} ORDER BY {ordenacao}")
         if limite:
@@ -328,7 +358,8 @@ class Biblioteca:
     def atualizar(self, musica_id: int, **campos: Any) -> Musica | None:
         """Atualiza colunas conhecidas (metadados editados na tela)."""
         permitidos = {"titulo", "artista", "album", "ano", "genero", "faixa",
-                      "origem_url", "favorito", "tem_capa"}
+                      "origem_url", "favorito", "tem_capa", "duracao",
+                      "tamanho"}
         dados = {c: v for c, v in campos.items() if c in permitidos}
         if not dados:
             return self.obter(musica_id)
@@ -452,6 +483,32 @@ class Biblioteca:
                      chave_busca(musica.artista).strip())
             grupos.setdefault(chave, []).append(musica)
         return [grupo for grupo in grupos.values() if len(grupo) > 1]
+
+    def contar_filtrado(self, **filtros: Any) -> int:
+        """Quantas músicas o filtro pega (a tela mostra antes de listar)."""
+        return len(self.listar(**filtros))
+
+    def facetas(self) -> dict[str, list[dict[str, Any]]]:
+        """Valores para os menus de filtro, com contagem, em uma consulta cada."""
+        def agrupar(coluna: str, ordem: str = "") -> list[dict[str, Any]]:
+            # Consulta separada por faceta: a conexão vive só dentro do bloco
+            # (reutilizá-la depois do ``with`` fecha o cursor silenciosamente).
+            with self._lock, self._conexao() as conexao:
+                linhas = conexao.execute(
+                    f"SELECT {coluna} AS valor, COUNT(*) AS total FROM musicas"
+                    f" WHERE {coluna} IS NOT NULL AND {coluna} != ''"
+                    f" GROUP BY {coluna}"
+                    f" ORDER BY {ordem or f'{coluna} COLLATE NOCASE'}"
+                ).fetchall()
+            return [{"valor": str(linha["valor"]), "total": int(linha["total"])}
+                    for linha in linhas]
+
+        return {
+            "artistas": agrupar("artista"),
+            "albuns": agrupar("album"),
+            "generos": agrupar("genero"),
+            "anos": agrupar("ano", "ano DESC"),
+        }
 
     def estatisticas(self) -> dict[str, Any]:
         with self._lock, self._conexao() as conexao:

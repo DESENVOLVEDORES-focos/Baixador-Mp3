@@ -199,3 +199,77 @@ class TestBiblioteca(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFiltrosDaBiblioteca(unittest.TestCase):
+    """Filtros combináveis, facetas e contagens — o que a tela oferece."""
+
+    def setUp(self):
+        self.raiz = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.raiz, True)
+        self.config = Configuracoes(raiz=self.raiz,
+                                    diretorio_musicas=self.raiz / "Musicas")
+        self.config.musicas.mkdir(parents=True, exist_ok=True)
+        self.biblioteca = Biblioteca(self.config)
+        criadas = [
+            ("a.mp3", "Alpha", "Artista Um", "Álbum X", "1999", "Rock", 120),
+            ("b.mp3", "Beta", "Artista Um", "Álbum X", "2005", "Pop", 400),
+            ("c.mp3", "Gama", "Artista Dois", "Álbum Y", "2005", "Rock", 250),
+        ]
+        self.ids = {}
+        for nome, titulo, artista, album, ano, genero, segundos in criadas:
+            if not _criar_mp3(self.config.musicas / nome, titulo=titulo,
+                              artista=artista, album=album, ano=ano,
+                              genero=genero):
+                self.skipTest("Sem FFmpeg/Mutagen")
+            musica = self.biblioteca.adicionar(self.config.musicas / nome)
+            self.ids[titulo] = musica.id
+            # duração real do arquivo é 2 s; grava a duração usada nos filtros
+            self.biblioteca.atualizar(musica.id, duracao=segundos)
+
+    def test_filtro_por_ano(self):
+        self.assertEqual(len(self.biblioteca.listar(ano="2005")), 2)
+        self.assertEqual(len(self.biblioteca.listar(ano="1999")), 1)
+
+    def test_filtro_por_duracao(self):
+        self.assertEqual(len(self.biblioteca.listar(duracao_min=300)), 1)
+        self.assertEqual(len(self.biblioteca.listar(duracao_max=200)), 1)
+        self.assertEqual(len(self.biblioteca.listar(duracao_min=100,
+                                                   duracao_max=300)), 2)
+
+    def test_filtros_combinados(self):
+        resultado = self.biblioteca.listar(artista="Artista Um", genero="Pop")
+        self.assertEqual([m.titulo for m in resultado], ["Beta"])
+
+    def test_sem_metadados_e_sem_capa(self):
+        # nenhuma das três tem artista vazio: nenhuma deve ser marcada como
+        # "sem metadados" (o filtro existe para achar arquivo sem tag)
+        self.assertEqual(self.biblioteca.listar(sem_metadados=True), [])
+        self.assertEqual(len(self.biblioteca.listar(sem_capa=True)), 3)
+        self.biblioteca.atualizar(self.ids["Alpha"], tem_capa=True)
+        self.assertEqual(len(self.biblioteca.listar(sem_capa=True)), 2)
+
+    def test_recentes_por_dias(self):
+        self.assertEqual(len(self.biblioteca.listar(dias=7)), 3)
+        self.assertEqual(len(self.biblioteca.listar(dias=0)), 3)
+
+    def test_favoritos_ordenacao(self):
+        self.biblioteca.alternar_favorito(self.ids["Gama"])
+        primeiro = self.biblioteca.listar(ordenar="favoritos")[0]
+        self.assertEqual(primeiro.titulo, "Gama")
+
+    def test_ordenacoes_novas_existem(self):
+        for nome in ("duracao_curta", "recentes", "favoritos", "artista_ano"):
+            with self.subTest(ordenacao=nome):
+                self.assertTrue(self.biblioteca.listar(ordenar=nome))
+
+    def test_facetas_trazem_valores_e_contagem(self):
+        facetas = self.biblioteca.facetas()
+        artistas = {f["valor"]: f["total"] for f in facetas["artistas"]}
+        self.assertEqual(artistas["Artista Um"], 2)
+        self.assertEqual([f["valor"] for f in facetas["anos"]], ["2005", "1999"])
+        self.assertEqual(len(facetas["generos"]), 2)
+
+    def test_contar_filtrado(self):
+        self.assertEqual(self.biblioteca.contar_filtrado(artista="Artista Um"), 2)
+        self.assertEqual(self.biblioteca.contar_filtrado(), 3)
