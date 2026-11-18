@@ -231,6 +231,60 @@ def normalizar_genero(valor: Any) -> str:
     return ", ".join(escolhidos[:3])  # "sem exagerar na quantidade"
 
 
+# Esquema do JSON pedido à IA: usado no prompt (response_format) e na
+# validação da resposta. A validação é o que impede um JSON torto de virar tag.
+ESQUEMA_RESPOSTA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "artista": {"type": "string"},
+        "album": {"type": "string"},
+        "ano": {"type": "string"},
+        "genero": {"type": "string"},
+        "faixa": {"type": "string"},
+    },
+    "required": ["titulo", "artista", "album", "ano", "genero", "faixa"],
+    "additionalProperties": False,
+}
+
+# Motivo da última rejeição (diagnóstico legível, sem segredo).
+ULTIMO_MOTIVO_INVALIDO = ""
+
+
+def _motivo_invalido(motivo: str) -> None:
+    global ULTIMO_MOTIVO_INVALIDO
+    ULTIMO_MOTIVO_INVALIDO = motivo
+
+
+def validar_resposta(dados: Any) -> tuple[dict[str, Any], str]:
+    """Confere o JSON da IA e devolve ``(campos_limpos, motivo_do_problema)``.
+
+    Regras (as mesmas do esquema enviado no prompt):
+    - precisa ser objeto JSON, não lista/string/número;
+    - valores precisam ser texto, número ou nulo (lista/dicionário aninhado é
+      resposta torta: recusa em vez de virar tag estranha);
+    - campo ausente é aceito como vazio, mas o objeto não pode vir vazio nem
+      inventar chaves fora do esquema (sinal de que a IA respondeu outra coisa).
+    """
+    if not isinstance(dados, dict):
+        return {}, "A resposta não é um objeto JSON."
+    if not dados:
+        return {}, "A resposta veio vazia."
+    conhecidos = set(ESQUEMA_RESPOSTA["properties"])
+    extras = sorted(set(dados) - conhecidos)
+    if extras and not (conhecidos & set(dados)):
+        return {}, f"A resposta não tem nenhum dos campos pedidos ({', '.join(extras)})"
+    limpos: dict[str, Any] = {}
+    for campo in conhecidos:
+        if campo not in dados:
+            continue
+        valor = dados[campo]
+        if isinstance(valor, (dict, list, tuple, set)):
+            return {}, f'O campo "{campo}" veio como lista/objeto, não como texto.'
+        limpos[campo] = valor
+    return limpos, ""
+
+
 def interpretar_resposta(conteudo: str, modelo: str = "") -> Identificacao | None:
     """Lê o JSON da IA; ``None`` se não houver os campos mínimos."""
     texto = (conteudo or "").strip()
@@ -247,7 +301,10 @@ def interpretar_resposta(conteudo: str, modelo: str = "") -> Identificacao | Non
             dados = json.loads(texto[inicio:fim + 1])
         except json.JSONDecodeError:
             return None
-    if not isinstance(dados, dict):
+    dados, motivo = validar_resposta(dados)
+    if motivo:
+        _motivo_invalido(motivo)
+        log.info("Resposta da IA recusada: %s", motivo)
         return None
 
     identificacao = Identificacao(
@@ -304,16 +361,29 @@ class IdentificadorIA:
         try:
             resposta = self.cliente.post_json(
                 self.url,
-                {"model": self.modelo,
-                 "messages": [{"role": "user",
-                               "content": montar_prompt(consulta, canal)}],
-                 "temperature": 0},
+                self._corpo(consulta, canal),
                 headers={"Authorization": f"Bearer {self.api_key}"},
             )
         except ErroAPI as erro:
-            self.ultimo_erro = _traduzir_erro(str(erro))
-            log.warning("Identificação por IA falhou: %s", self.ultimo_erro)
-            return None
+            corpo = self._corpo(consulta, canal)
+            if "response_format" in corpo and ("400" in str(erro)
+                                               or "response_format" in str(erro)):
+                # Provedor não aceita response_format: repete no modo prompt.
+                try:
+                    resposta = self.cliente.post_json(
+                        self.url,
+                        {k: v for k, v in corpo.items()
+                         if k != "response_format"},
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                    )
+                except Exception:
+                    self.ultimo_erro = _traduzir_erro(str(erro))
+                    log.warning("Identificação por IA falhou: %s", self.ultimo_erro)
+                    return None
+            else:
+                self.ultimo_erro = _traduzir_erro(str(erro))
+                log.warning("Identificação por IA falhou: %s", self.ultimo_erro)
+                return None
         except Exception as erro:  # rede exótica nunca derruba o download
             self.ultimo_erro = _traduzir_erro(f"{type(erro).__name__}: {erro}")
             log.warning("Identificação por IA falhou: %s", self.ultimo_erro)
@@ -325,10 +395,37 @@ class IdentificadorIA:
         except (KeyError, IndexError, TypeError):
             self.ultimo_erro = "A IA respondeu num formato inesperado."
             return None
+        _motivo_invalido("")
         resultado = interpretar_resposta(conteudo, self.modelo)
         if resultado is None:
-            self.ultimo_erro = "A IA não devolveu os campos pedidos."
+            self.ultimo_erro = ("A IA não devolveu os campos pedidos"
+                                + (f": {ULTIMO_MOTIVO_INVALIDO}"
+                                   if ULTIMO_MOTIVO_INVALIDO else "."))
+            log.info("IA: %s", self.ultimo_erro)
         return resultado
+
+    def _corpo(self, consulta: str, canal: str = "") -> dict[str, Any]:
+        """Corpo da requisição, pedindo JSON quando o provedor suporta.
+
+        ``response_format`` é do padrão OpenAI; se a API recusar (400), a
+        chamada é repetida sem ele — o prompt já exige JSON, e a validação
+        continua sendo feita do nosso lado.
+        """
+        corpo: dict[str, Any] = {
+            "model": self.modelo,
+            "messages": [{"role": "user",
+                          "content": montar_prompt(consulta, canal)}],
+            "temperature": 0,
+        }
+        if os.environ.get("BAIXADOR_IA_SEM_FORMATO_JSON", "").strip() in (
+                "1", "sim", "true"):
+            return corpo
+        corpo["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "identificacao_musical",
+                            "strict": True, "schema": ESQUEMA_RESPOSTA},
+        }
+        return corpo
 
     def testar_conexao(self) -> tuple[bool, str]:
         """Chamada mínima para validar a chave (sem gastar uma identificação)."""
@@ -411,6 +508,7 @@ def criar_identificador(config: Configuracoes = CONFIG) -> IdentificadorIA | Non
 
 __all__ = [
     "GENEROS_REFERENCIA", "Identificacao", "IdentificadorIA", "NAO_IDENTIFICADO",
-    "aplicar_na_info", "criar_identificador", "interpretar_resposta",
-    "montar_prompt", "normalizar_genero",
+    "aplicar_na_info", "criar_identificador", "ESQUEMA_RESPOSTA",
+    "interpretar_resposta", "montar_prompt", "normalizar_genero",
+    "validar_resposta",
 ]

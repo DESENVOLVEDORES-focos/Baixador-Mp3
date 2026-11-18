@@ -15,7 +15,8 @@ from api_ia import ErroChave, extrair_chave, mascarar
 from configuracoes import Configuracoes
 from identificacao_ia import (
     GENEROS_REFERENCIA, Identificacao, IdentificadorIA, aplicar_na_info,
-    interpretar_resposta, montar_prompt, normalizar_genero,
+    ESQUEMA_RESPOSTA, interpretar_resposta, montar_prompt,
+    normalizar_genero, validar_resposta,
 )
 from inteligencia import ErroAPI, InfoMusica
 
@@ -378,3 +379,105 @@ def _mp3_minimo() -> bytes:
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class TestJsonDaIAValidado(unittest.TestCase):
+    """A resposta da IA é conferida antes de virar tag — JSON torto não passa."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.config = Configuracoes(raiz=Path(self.temp.name))
+
+    def _cliente(self, respostas):
+        """Cliente que devolve respostas em sequência (última se repetir)."""
+        class Cliente:
+            def __init__(self):
+                self.chamadas = []
+
+            def post_json(self, url, payload, headers=None):
+                self.chamadas.append((url, payload, headers))
+                item = respostas[min(len(self.chamadas) - 1, len(respostas) - 1)]
+                if isinstance(item, Exception):
+                    raise item
+                return item
+        return Cliente()
+
+    @staticmethod
+    def _resposta(conteudo):
+        return {"choices": [{"message": {"content": conteudo}}]}
+
+    def test_pede_json_estruturado(self):
+        cliente = self._cliente([self._resposta('{"titulo":"X","artista":"Y"}')])
+        IdentificadorIA(cliente=cliente, api_key="sk-1",
+                        config=self.config).identificar("X")
+        formato = cliente.chamadas[0][1]["response_format"]
+        self.assertEqual(formato["type"], "json_schema")
+        self.assertEqual(formato["json_schema"]["schema"]["required"],
+                         ["titulo", "artista", "album", "ano", "genero", "faixa"])
+
+    def test_provedor_sem_response_format_e_repetido_sem_ele(self):
+        """Provedor que recusa o formato: a segunda chamada não pode falhar."""
+        cliente = self._cliente([
+            ErroAPI("HTTP 400 invalid response_format"),
+            self._resposta('{"titulo":"X","artista":"Y","album":"A"}'),
+        ])
+        identificador = IdentificadorIA(cliente=cliente, api_key="sk-1",
+                                        config=self.config)
+        resultado = identificador.identificar("X")
+        self.assertIsNotNone(resultado, identificador.ultimo_erro)
+        self.assertEqual(resultado.album, "A")
+        self.assertEqual(len(cliente.chamadas), 2)
+        self.assertNotIn("response_format", cliente.chamadas[1][1])
+
+    def test_erro_400_sem_json_tambem_cai_para_prompt(self):
+        cliente = self._cliente([
+            ErroAPI("HTTP 400 response_format json_schema unsupported"),
+            self._resposta("Aqui está: {\"titulo\":\"X\",\"artista\":\"Y\"}"),
+        ])
+        resultado = IdentificadorIA(cliente=cliente, api_key="sk-1",
+                                    config=self.config).identificar("X")
+        self.assertIsNotNone(resultado)
+
+    def test_erro_de_rede_nao_repete_chamada(self):
+        cliente = self._cliente([ErroAPI("urlopen error timed out")])
+        identificador = IdentificadorIA(cliente=cliente, api_key="sk-1",
+                                        config=self.config)
+        self.assertIsNone(identificador.identificar("X"))
+        self.assertEqual(len(cliente.chamadas), 1)
+
+    def test_lista_valores_e_objetos_sao_recusados(self):
+        for conteudo in ('{"titulo":["a","b"],"artista":"Y"}',
+                         '{"genero":{"a":1},"titulo":"X","artista":"Y"}',
+                         '[]', '"texto"', 'null'):
+            with self.subTest(conteudo=conteudo):
+                identificador = IdentificadorIA(
+                    cliente=self._cliente([self._resposta(conteudo)]),
+                    api_key="sk-1", config=self.config)
+                self.assertIsNone(identificador.identificar("X"))
+
+    def test_chaves_desconhecidas_sem_campos_pedidos_avisam(self):
+        identificador = IdentificadorIA(
+            cliente=self._cliente([self._resposta('{"resposta":"não sei"}')]),
+            api_key="sk-1", config=self.config)
+        self.assertIsNone(identificador.identificar("X"))
+        self.assertIn("não tem nenhum dos campos", identificador.ultimo_erro)
+
+    def test_chaves_extras_junto_com_campos_validos_sao_ignoradas(self):
+        identificador = IdentificadorIA(
+            cliente=self._cliente([self._resposta(
+                '{"titulo":"X","artista":"Y","confianca":0.9,"obs":"ok"}')]),
+            api_key="sk-1", config=self.config)
+        resultado = identificador.identificar("X")
+        self.assertEqual(resultado.titulo, "X")
+
+    def test_validar_resposta_direto(self):
+        limpos, motivo = validar_resposta({"titulo": "X", "artista": "Y"})
+        self.assertEqual(limpos, {"titulo": "X", "artista": "Y"})
+        self.assertEqual(motivo, "")
+        self.assertEqual(validar_resposta({})[1], "A resposta veio vazia.")
+        self.assertIn("objeto JSON", validar_resposta([1, 2])[1])
+
+    def test_esquema_nao_aceita_campo_extra(self):
+        self.assertFalse(ESQUEMA_RESPOSTA["additionalProperties"])
+        self.assertEqual(len(ESQUEMA_RESPOSTA["properties"]), 6)
