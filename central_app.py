@@ -16,6 +16,7 @@ import queue
 import sys
 import threading
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -118,6 +119,8 @@ class CentralApp:
         self.pagina_atual = "inicio"
         self._botoes_nav: dict[str, Any] = {}
         self._fila_eventos: queue.Queue = queue.Queue()
+        # Mensagens/erros mostrados ao usuário nesta sessão (painel + arquivo).
+        self.mensagens: list[tuple[str, bool, str]] = []
         self._lock = threading.RLock()
         self._resultados: list[Any] = []
         self._playlists_busca: list[Any] = []
@@ -192,6 +195,11 @@ class CentralApp:
         barra.pack(fill="x", pady=(6, 0))
         ttk.Label(barra, textvariable=self.status_var,
                   style="Fraco.TLabel").pack(side="left")
+        ttk.Button(barra, text="Mensagens",
+                   command=self._abrir_mensagens).pack(side="right")
+        ttk.Button(barra, text="Abrir pasta de dados",
+                   command=lambda: self._abrir_no_sistema(
+                       str(self.central.config.dados))).pack(side="right", padx=6)
 
     def mostrar(self, chave: str) -> None:
         """Troca de página sem abrir janela nova e sem perder estado."""
@@ -225,12 +233,72 @@ class CentralApp:
         self.status_var.set(texto)
 
     def notificar(self, titulo: str, mensagem: str, *, erro: bool = False) -> None:
-        """Mensagem clara: barra de status + caixa (sem poluir a tela)."""
+        """Mensagem clara: barra de status + caixa + registro na tela."""
         self.definir_status(f"{titulo}: {mensagem}")
+        self.registrar_mensagem(f"{titulo}: {mensagem}", erro=erro)
         try:
             (messagebox.showerror if erro else messagebox.showinfo)(titulo, mensagem)
         except Exception:
             pass
+
+    # -- registro de mensagens (a tela mostra; o arquivo guarda) -------------
+    def registrar_mensagem(self, texto: str, *, erro: bool = False) -> None:
+        """Guarda a mensagem para o painel de log e para ``dados/app.log``.
+
+        A interface nunca depende do terminal: o que o programa diz ao usuário
+        fica visível na própria janela e sobrevive ao fechamento (arquivo).
+        """
+        carimbo = datetime.now().strftime("%H:%M:%S")
+        linha = f"[{carimbo}] {'ERRO ' if erro else ''}{texto}"
+        self.mensagens.append((carimbo, bool(erro), str(texto)))
+        del self.mensagens[:-400]          # o painel não cresce sem limite
+        try:
+            destino = Path(self.central.config.dados) / "app.log"
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            with destino.open("a", encoding="utf-8") as arquivo:
+                arquivo.write(linha + "\n")
+        except Exception:
+            pass                           # log em arquivo é complemento
+
+    def mensagens_recentes(self, limite: int = 200) -> list[tuple[str, bool, str]]:
+        return list(self.mensagens)[-limite:]
+
+    def _abrir_mensagens(self) -> None:
+        """Janela com o que o programa informou nesta sessão."""
+        janela = tk.Toplevel(self.raiz)
+        janela.title("Mensagens desta sessão")
+        janela.configure(background=self.cores["fundo"])
+        ttk.Label(janela, text="Mensagens e erros desta sessão",
+                  style="Titulo.TLabel").pack(anchor="w", padx=10, pady=(10, 2))
+        ttk.Label(janela,
+                  text="O mesmo conteúdo é gravado em dados/app.log.",
+                  style="Fraco.TLabel").pack(anchor="w", padx=10)
+        caixa = tk.Text(janela, height=18, width=100, wrap="word")
+        caixa.pack(fill="both", expand=True, padx=10, pady=8)
+        for carimbo, erro, texto in self.mensagens_recentes():
+            prefixo = "ERRO " if erro else ""
+            caixa.insert("end", f"[{carimbo}] {prefixo}{texto}\n")
+        caixa.see("end")
+        rodape = ttk.Frame(janela)
+        rodape.pack(fill="x", padx=10, pady=(0, 10))
+
+        def copiar() -> None:
+            try:
+                self.raiz.clipboard_clear()
+                self.raiz.clipboard_append(caixa.get("1.0", "end").strip())
+                self.definir_status("Mensagens copiadas para a área de transferência.")
+            except Exception:
+                pass
+
+        def limpar() -> None:
+            self.mensagens.clear()
+            caixa.delete("1.0", "end")
+            self.definir_status("Painel de mensagens limpo (o arquivo é mantido).")
+
+        ttk.Button(rodape, text="Copiar tudo", command=copiar).pack(side="left")
+        ttk.Button(rodape, text="Limpar painel", command=limpar).pack(side="left", padx=6)
+        ttk.Button(rodape, text="Fechar", command=janela.destroy).pack(side="right")
+        return janela
 
     def _executar(self, trabalho: Callable[[], Any],
                   concluir: Callable[[Any], None] | None = None,
@@ -250,6 +318,7 @@ class CentralApp:
     def _mostrar_erro(self, erro: Exception) -> None:
         texto = str(erro) or erro.__class__.__name__
         self.definir_status(f"Erro: {texto[:160]}")
+        self.registrar_mensagem(texto, erro=True)
         try:
             messagebox.showerror("Central Musical", texto)
         except Exception:
@@ -2903,7 +2972,6 @@ def iniciar(configuracoes: Any = None) -> None:
     """Abre a Central Musical (ponto de entrada: ``python central_app.py``)."""
     if tk is None:
         raise SystemExit("Tkinter não está disponível neste Python.")
-    from datetime import datetime
     from logging.handlers import RotatingFileHandler
 
     from central import Central as _Central

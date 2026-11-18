@@ -40,6 +40,14 @@ class _Widget:
             raise AttributeError(nome)
 
         def qualquer(*args, **kwargs):
+            if nome == "insert" and getattr(self, "tipo", "") == "Text":
+                # guarda o texto inserido para os testes poderem conferir
+                indice = str(args[1]) if len(args) > 1 else ""
+                # caixa.insert("end", "texto") → args = ("end", "texto")
+                texto = (args[2] if len(args) > 2
+                         else (args[1] if len(args) > 1 else ""))
+                self._valores.setdefault("texto", {})[indice] = texto
+                return None
             if nome == "insert":
                 ident = kwargs.get("iid") or f"i{len(self._itens)}"
                 self._itens.append(str(ident))
@@ -1216,3 +1224,85 @@ class TestBuscaEFormatoNaCesta(unittest.TestCase):
         self.app.cesta_busca.set("tempo")
         self.app._atualizar_fila()
         self.assertIn("3 música(s)", self.app.cesta_var.get())
+
+
+class TestPainelDeMensagens(unittest.TestCase):
+    """O que a interface diz fica na tela e no arquivo — não só no terminal."""
+
+    @classmethod
+    def setUpClass(cls):
+        TestCentralApp.setUpClass()
+        cls.app = TestCentralApp.app
+        cls.central = TestCentralApp.central
+
+    @classmethod
+    def tearDownClass(cls):
+        TestCentralApp.tearDownClass()
+
+    def setUp(self):
+        self.app.mensagens.clear()
+        self.arquivo = Path(self.central.config.dados) / "app.log"
+        if self.arquivo.exists():
+            self.arquivo.unlink()
+
+    def test_notificar_registra_com_e_sem_erro(self):
+        with patch.object(TestCentralApp.modulo, "messagebox"):
+            self.app.notificar("Cesta", "3 itens adicionados")
+            self.app.notificar("Capa", "Nenhuma capa válida", erro=True)
+        recentes = self.app.mensagens_recentes()
+        self.assertEqual(len(recentes), 2)
+        self.assertFalse(recentes[0][1])
+        self.assertTrue(recentes[1][1])
+        self.assertIn("Nenhuma capa válida", recentes[1][2])
+
+    def test_mensagem_vai_para_o_arquivo_de_log(self):
+        with patch.object(TestCentralApp.modulo, "messagebox"):
+            self.app.notificar("Downloads", "2 concluídos")
+        self.assertTrue(self.arquivo.is_file())
+        conteudo = self.arquivo.read_text(encoding="utf-8")
+        self.assertIn("Downloads: 2 concluídos", conteudo)
+
+    def test_erro_assincrono_aparece_no_painel(self):
+        with patch.object(TestCentralApp.modulo, "messagebox"):
+            self.app._mostrar_erro(RuntimeError("falha de rede"))
+        textos = [t for _c, _e, t in self.app.mensagens_recentes()]
+        self.assertTrue(any("falha de rede" in t for t in textos))
+
+    def test_painel_nao_cresce_sem_limite(self):
+        with patch.object(TestCentralApp.modulo, "messagebox"):
+            for numero in range(410):
+                self.app.notificar("Teste", f"mensagem {numero}")
+        self.assertLessEqual(len(self.app.mensagens), 400)
+        self.assertIn("mensagem 409", self.app.mensagens[-1][2])
+
+    def test_janela_mostra_as_mensagens(self):
+        self.app.registrar_mensagem("primeira")
+        self.app.registrar_mensagem("segunda", erro=True)
+        janela = self.app._abrir_mensagens()
+        caixas = [w for w in _widgets_criados
+                  if getattr(w, "tipo", "") == "Text"]
+        self.assertTrue(caixas)
+        # o dublê de Text anota o conteúdo inserido em _valores["texto"]
+        conteudo = caixas[-1]._valores.get("texto") or {}
+        texto = " ".join(str(v) for v in conteudo.values()) or " ".join(
+            str(v) for v in caixas[-1]._itens)
+        self.assertIn("primeira", texto)
+        self.assertIn("ERRO segunda", texto)
+        janela.destroy()
+
+    def test_botao_mensagens_existe_na_barra_de_status(self):
+        rotulos = [w.kwargs.get("text") for w in _widgets_criados
+                   if getattr(w, "tipo", "") == "Button"]
+        self.assertIn("Mensagens", rotulos)
+        self.assertIn("Abrir pasta de dados", rotulos)
+
+    def test_limpar_painel_nao_apaga_o_arquivo(self):
+        with patch.object(TestCentralApp.modulo, "messagebox"):
+            self.app.notificar("Teste", "para apagar")
+        janela = self.app._abrir_mensagens()
+        limpar = [w for w in _widgets_criados
+                  if w.kwargs.get("text") == "Limpar painel"][-1]
+        limpar.kwargs["command"]()
+        self.assertEqual(self.app.mensagens, [])
+        self.assertIn("para apagar", self.arquivo.read_text(encoding="utf-8"))
+        janela.destroy()
