@@ -935,6 +935,12 @@ class AplicativoGrafico:
                 idade = ""
             texto = (f"Configurado e válido: {info.total} cookie(s), "
                      f"{info.do_youtube} do YouTube/Google{idade} — {info.caminho}")
+            if getattr(info, "expirados_do_youtube", 0):
+                texto = (f"ATENÇÃO: {info.expirados_do_youtube} de "
+                         f"{info.do_youtube} cookie(s) do YouTube já venceram. "
+                         "Exporte o cookies.txt de novo se o YouTube pedir login. ")
+            else:
+                texto += " — pronto para usar."
             self.cookies_botao_var.set("Substituir cookies.txt...")
         else:
             texto = f"Configurado, mas inválido: {info.mensagem}"
@@ -953,8 +959,23 @@ class AplicativoGrafico:
             return
         self._registrar(f"Cookies importados: {info.total} cookie(s) válido(s).")
         self._atualizar_status_cookies()
-        messagebox.showinfo("Cookies", "cookies.txt importado e válido. "
-                                       "Ele será usado automaticamente pelo yt-dlp.")
+        vencidos = getattr(info, "expirados_do_youtube", 0)
+        if vencidos and vencidos >= info.do_youtube:
+            messagebox.showwarning(
+                "Cookies",
+                "cookies.txt importado, mas TODOS os cookies do YouTube já "
+                "venceram — o yt-dlp vai ignorá-los.\n\nExporte o arquivo de "
+                "novo pelo navegador (logado no YouTube) e importe outra vez.")
+        elif vencidos:
+            messagebox.showwarning(
+                "Cookies",
+                f"cookies.txt importado. Atenção: {vencidos} cookie(s) do "
+                "YouTube já venceram; se o YouTube pedir login, exporte de novo.")
+        else:
+            messagebox.showinfo(
+                "Cookies",
+                "cookies.txt importado e válido. Ele já está sendo usado "
+                "automaticamente pelo yt-dlp.")
 
     def _ao_remover_cookies(self) -> None:
         if not messagebox.askyesno(

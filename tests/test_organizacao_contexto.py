@@ -342,6 +342,68 @@ class TestCookiesNaPasta(unittest.TestCase):
         self.assertEqual(argumentos_cookies(config), [])
 
 
+class TestCookiesVencidos(unittest.TestCase):
+    """Cookies expirados são a causa nº 1 de 'importei e continuou pedindo login'."""
+
+    def _texto(self, expira_youtube, expira_google=None, agora=None):
+        import time
+
+        base = int(time.time()) if agora is None else int(agora)
+        linhas = ["# Netscape HTTP Cookie File"]
+        for i, expira in enumerate(expira_youtube):
+            linhas.append(f".youtube.com\tTRUE\t/\tTRUE\t{base + expira}\tSID{i}\tv")
+        if expira_google is not None:
+            linhas.append(f".google.com\tTRUE\t/\tTRUE\t{base + expira_google}\tNID\tv")
+        return "\n".join(linhas) + "\n"
+
+    def test_conta_vencidos(self):
+        from cookies_youtube import contar_vencidos
+
+        texto = self._texto([-86400, -100, 86400])
+        self.assertEqual(contar_vencidos(texto), (2, 2))
+
+    def test_cookie_de_sessao_nao_conta_como_vencido(self):
+        from cookies_youtube import contar_vencidos
+
+        texto = ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tv\n"
+        self.assertEqual(contar_vencidos(texto), (0, 0))
+
+    def test_status_avisa_quando_tudo_venceu(self):
+        from configuracoes import Configuracoes
+        from cookies_youtube import status
+
+        raiz = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, raiz, True)
+        raiz.joinpath("cookies.txt").write_text(self._texto([-5000], -5000),
+                                                encoding="utf-8")
+        dados = tempfile.TemporaryDirectory()
+        self.addCleanup(dados.cleanup)
+        os.environ["BAIXADOR_DATA_DIR"] = dados.name
+        self.addCleanup(os.environ.pop, "BAIXADOR_DATA_DIR", None)
+
+        info = status(Configuracoes(raiz=raiz))
+        self.assertTrue(info.valido)  # formato bom; o problema é a validade
+        self.assertEqual(info.expirados_do_youtube, 2)
+        self.assertIn("venceram", info.mensagem)
+
+    def test_status_sem_vencimento_diz_que_esta_pronto(self):
+        from configuracoes import Configuracoes
+        from cookies_youtube import status
+
+        raiz = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, raiz, True)
+        raiz.joinpath("cookies.txt").write_text(self._texto([86400]),
+                                                encoding="utf-8")
+        dados = tempfile.TemporaryDirectory()
+        self.addCleanup(dados.cleanup)
+        os.environ["BAIXADOR_DATA_DIR"] = dados.name
+        self.addCleanup(os.environ.pop, "BAIXADOR_DATA_DIR", None)
+
+        info = status(Configuracoes(raiz=raiz))
+        self.assertEqual(info.expirados_do_youtube, 0)
+        self.assertIn("pronto", info.mensagem)
+
+
 class TestContextoMidia(unittest.TestCase):
     def test_a_partir_de_resultado_de_pesquisa(self):
         resultado = SimpleNamespace(titulo="Faixa", canal="Canal", duracao=210,

@@ -220,3 +220,17 @@
   `resolver_cookies` passou a considerá-lo e `status` também.
 - Teste de regressão: `TestCookiesNaPasta` (3 casos: solto na pasta, inválido,
   ausente).
+
+### Cookies: clique simulado na aba Configurações
+- Com Tk simulado (mesmo dublê de `tests/test_interface_widgets.py`), o fluxo
+  real foi executado: `filedialog.askopenfilename` devolve um cookies.txt,
+  `_ao_importar_cookies` roda, o status da tela é atualizado.
+- Antes: `botão = "Selecionar cookies.txt..."`, status "Nenhum cookies.txt
+  configurado". Depois do clique: `botão = "Substituir cookies.txt..."`,
+  status "2 cookie(s), 2 do YouTube/Google … — pronto para usar", popup de
+  confirmação, e `argumentos_cookies` passa a devolver `--cookies <caminho>`.
+  Arquivo inválido → popup de erro com o motivo; "Remover" → `--cookies` some.
+- Defeito encontrado nesse teste: `importar()` devolvia só contagem, sem
+  expiração, então o popup dizia "válido" mesmo com todos os cookies vencidos.
+  `contar_vencidos` passou a ser usado em `importar()` e em `status()`.
+- Testes novos: `TestCookiesVencidos` (4 casos, incluindo cookie de sessão).

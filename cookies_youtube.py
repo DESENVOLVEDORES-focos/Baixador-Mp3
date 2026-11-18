@@ -42,6 +42,10 @@ class InfoCookies:
     total: int = 0
     do_youtube: int = 0
     mensagem: str = ""
+    # Cookies com data de expiração já passada: o yt-dlp os ignora, e é a causa
+    # mais comum de "importei e continuou pedindo login".
+    vencidos: int = 0
+    expirados_do_youtube: int = 0
 
 
 def analisar_conteudo(texto: str) -> tuple[int, int]:
@@ -72,6 +76,38 @@ def analisar_conteudo(texto: str) -> tuple[int, int]:
             "Formato incompatível: nenhuma linha de cookie no formato "
             "Netscape (7 campos separados por tabulação) foi encontrada.")
     return total, youtube
+
+
+def contar_vencidos(texto: str, agora: float | None = None) -> tuple[int, int]:
+    """``(vencidos, vencidos_do_youtube)`` pelas datas de expiração do arquivo.
+
+    O 5º campo Netscape é a expiração em epoch (``0`` = cookie de sessão, que
+    vale enquanto o navegador está aberto e não é considerado vencido aqui).
+    """
+    import time
+
+    momento = time.time() if agora is None else agora
+    vencidos = do_youtube = 0
+    for linha in texto.splitlines():
+        linha = linha.strip("\r\n")
+        if linha.startswith("#HttpOnly_"):
+            linha = linha[len("#HttpOnly_"):]
+        elif not linha.strip() or linha.startswith("#"):
+            continue
+        campos = linha.split("\t")
+        if len(campos) != 7:
+            continue
+        try:
+            expira = float(campos[4].strip())
+        except ValueError:
+            continue
+        if expira <= 0 or expira > momento:
+            continue
+        vencidos += 1
+        dominio = campos[0].lower()
+        if "youtube.com" in dominio or "google.com" in dominio:
+            do_youtube += 1
+    return vencidos, do_youtube
 
 
 def caminho_destino(config: Configuracoes = CONFIG) -> Path:
@@ -108,8 +144,16 @@ def importar(origem: Path | str, config: Configuracoes = CONFIG) -> InfoCookies:
         raise ErroCookies(f"Não foi possível armazenar os cookies: {erro}") from erro
     # Registra apenas metadados — jamais o conteúdo dos cookies.
     log.info("Cookies importados: %d no total, %d do YouTube/Google.", total, youtube)
-    return InfoCookies(True, destino, True, total, youtube,
-                       "Arquivo importado e válido.")
+    vencidos, vencidos_youtube = contar_vencidos(texto)
+    if vencidos_youtube:
+        log.info("Cookies do YouTube já vencidos: %d de %d.", vencidos_youtube, youtube)
+        mensagem = (
+            f"Arquivo importado, mas {vencidos_youtube} cookie(s) do YouTube já "
+            "venceram. Exporte de novo pelo navegador se o YouTube pedir login.")
+    else:
+        mensagem = "Arquivo importado e válido."
+    return InfoCookies(True, destino, True, total, youtube, mensagem,
+                       vencidos, vencidos_youtube)
 
 
 def remover(config: Configuracoes = CONFIG) -> bool:
@@ -154,11 +198,24 @@ def status(config: Configuracoes = CONFIG) -> InfoCookies:
         total, youtube = analisar_conteudo(texto)
     except ErroCookies as erro:
         return InfoCookies(True, destino, False, mensagem=str(erro))
-    return InfoCookies(True, destino, True, total, youtube,
-                       "Arquivo acessível e em formato Netscape válido.")
+    vencidos, vencidos_youtube = contar_vencidos(texto)
+    if youtube and vencidos_youtube >= youtube:
+        mensagem = (
+            "Arquivo válido, mas TODOS os cookies do YouTube já venceram: "
+            "o yt-dlp vai ignorá-los. Exporte o cookies.txt de novo pelo "
+            "navegador (logado no YouTube) e importe outra vez.")
+    elif vencidos_youtube:
+        mensagem = (
+            f"Arquivo válido, mas {vencidos_youtube} cookie(s) do YouTube já "
+            "venceram. Se aparecer pedido de login, exporte novamente.")
+    else:
+        mensagem = ("Arquivo válido e pronto: o yt-dlp já vai usá-lo nos "
+                    "próximos downloads e pesquisas.")
+    return InfoCookies(True, destino, True, total, youtube, mensagem,
+                       vencidos, vencidos_youtube)
 
 
 __all__ = [
     "ErroCookies", "InfoCookies", "analisar_conteudo", "caminho_destino",
-    "importar", "remover", "status",
+    "contar_vencidos", "importar", "remover", "status",
 ]
