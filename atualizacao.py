@@ -15,6 +15,7 @@ Regras:
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import subprocess
 import sys
@@ -62,12 +63,23 @@ def versao_instalada(config: Configuracoes = CONFIG,
 
 
 def _usando_modulo(config: Configuracoes) -> bool:
-    """True quando o yt-dlp é importável (instalação via pip)."""
+    """True quando o yt-dlp é um pacote Python atualizável por pip.
+
+    Não basta olhar o comando: se existe um ``yt-dlp`` no PATH (inclusive o do
+    CI), ele tem prioridade e o textual "-m" não aparece. O que decide é o
+    pacote existir de fato — é ele que o pip atualizaria.
+    """
+    try:
+        if importlib.util.find_spec("yt_dlp") is None:
+            return False
+    except (ImportError, ValueError):
+        return False
     try:
         comando = config.comando_yt_dlp()
     except (FileNotFoundError, OSError):
         return False
-    return "-m" in comando
+    # Um .exe/.bin dentro de ferramentas é gerenciado pelo usuário, não pelo pip.
+    return not any("ferramentas" in str(parte) for parte in comando)
 
 
 def _resumir(saida: str, limite: int = 400) -> str:
