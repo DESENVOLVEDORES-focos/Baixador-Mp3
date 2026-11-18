@@ -1,0 +1,35 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.baixador/
+Musicas/
+Videos/
+ferramentas/yt-dlp.exe
+ferramentas/ffmpeg.exe
+ferramentas/ffprobe.exe
+ferramentas/yt-dlp
+ferramentas/ffmpeg
+cookies.txt
+# Chave de IA importada por arquivo (nunca commitar)
+api.txt
+**/api.txt
+api_key.txt
+chave.txt
+*.part
+*.ytdl
+# Etapa 3: credenciais e preferencias locais (nunca commitar)
+**/cookies.txt
+**/preferencias.json
+*.cookies.txt
+cookies-export.txt
+
+# Instalação local
+Baixador-Mp3.lnk
+ferramentas/*.zip
+
+# Pacote de entrega: gerado localmente, NUNCA versionado
+Central_MP3_Teste.zip

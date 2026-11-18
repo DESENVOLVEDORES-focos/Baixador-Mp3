@@ -1,0 +1,6 @@
+# Dependencias principais (instaladas por configurar.bat)
+yt-dlp>=2024.12.23
+mutagen>=1.47
+# Capas: redimensionar/validar imagens e EXIBIR miniatura na interface.
+# Sem Pillow o programa funciona, mas não consegue mostrar/miniaturizar capas.
+Pillow>=10

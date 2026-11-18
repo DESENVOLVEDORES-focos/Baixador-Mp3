@@ -1,0 +1,2 @@
+# Os .bat precisam de CRLF para o cmd.exe do Windows executar goto/labels.
+*.bat text eol=crlf

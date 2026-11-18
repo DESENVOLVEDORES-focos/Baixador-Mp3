@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  testes:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      # Windows não expande "*.py" no shell: a lista é montada pelo próprio
+      # Python para o resultado ser idêntico nos dois sistemas.
+      - name: Análise estática (pyflakes)
+        run: |
+          python -c "import glob,subprocess,sys; alvos=glob.glob('*.py')+glob.glob('baixador/**/*.py',recursive=True)+glob.glob('tests/*.py'); sys.exit(subprocess.call([sys.executable,'-m','pyflakes',*alvos]))"
+
+      - name: Compilação
+        run: python -m compileall -q . -x '(\.git|ferramentas)'
+
+      - name: Testes
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q -rf --tb=line > saida-testes.txt 2>&1 || true
+          cat saida-testes.txt
+          # Publica o motivo da falha como anotação do check (legível pela API
+          # mesmo quando o log bruto não está acessível).
+          if grep -qE "failed|error" saida-testes.txt; then
+            grep -E "^(FAILED|ERROR)" saida-testes.txt | head -10 | while IFS= read -r l; do
+              echo "::error title=Falha de teste::$l"
+            done
+            grep -E "^(E |[A-Za-z]:.*Error|/.*Error)" saida-testes.txt | head -10 | while IFS= read -r l; do
+              echo "::error title=Detalhe::$l"
+            done
+          fi
+          python -m pytest -q > /dev/null 2>&1
+
+      - name: Publicar resultado dos testes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: saida-testes-${{ matrix.os }}
+          path: saida-testes.txt
+
+      - name: Interface importa sem erro (sem abrir janela)
+        run: python -c "from baixador.app import interface, musica, central; from baixador.web import downloader, pesquisa, cookies_youtube, thumbs; from baixador.nucleo import preferencias; print('imports ok')"
