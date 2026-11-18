@@ -1031,3 +1031,87 @@ class TestCandidatosDeCapaNoCentral(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDetalhesDoResultado(unittest.TestCase):
+    """Clicar num resultado mostra ficha e miniatura — sem baixar mídia."""
+
+    @classmethod
+    def setUpClass(cls):
+        TestCentralApp.setUpClass()
+        cls.app = TestCentralApp.app
+        cls.central = TestCentralApp.central
+
+    @classmethod
+    def tearDownClass(cls):
+        TestCentralApp.tearDownClass()
+
+    @staticmethod
+    def _resultado(**campos):
+        dados = dict(id="abc12345678", titulo="Faixa", canal="Artista",
+                     duracao=210, url="https://youtu.be/abc12345678",
+                     thumbnail="https://i.ytimg.com/vi/abc12345678/mqdefault.jpg",
+                     tipo="video", quantidade=None, canal_verificado=False,
+                     duracao_formatada="3:30", tipo_legivel="Vídeo")
+        dados.update(campos)
+        return type("R", (), dados)()
+
+    def setUp(self):
+        self.app.mostrar("pesquisar")
+
+    def _selecionar(self, resultado):
+        self.app._resultados = [resultado]
+        with patch.object(self.app, "_indices_selecionados", return_value=[0]):
+            self.app._mostrar_detalhes_resultado()
+
+    def test_ficha_mostra_titulo_canal_e_tipo(self):
+        self._selecionar(self._resultado())
+        texto = self.app.pesquisa_detalhe.get()
+        self.assertIn("Faixa", texto)
+        self.assertIn("Artista", texto)
+        self.assertIn("Vídeo", texto)
+        self.assertIn("Duração: 3:30", texto)
+        self.assertIn("https://youtu.be/abc12345678", texto)
+
+    def test_sem_duracao_diz_que_nao_foi_informada(self):
+        self._selecionar(self._resultado(duracao=None, duracao_formatada="desconhecida"))
+        self.assertIn("não informou", self.app.pesquisa_detalhe.get())
+
+    def test_compilado_longo_e_sinalizado(self):
+        self._selecionar(self._resultado(duracao=7200, duracao_formatada="2:00:00"))
+        self.assertIn("compilado/mix longo", self.app.pesquisa_detalhe.get())
+
+    def test_playlist_mostra_quantidade(self):
+        self._selecionar(self._resultado(tipo="playlist", quantidade=42,
+                                         tipo_legivel="Playlist (42 vídeos)"))
+        self.assertIn("42 vídeos", self.app.pesquisa_detalhe.get())
+
+    def test_diz_se_ja_esta_na_biblioteca(self):
+        with patch.object(self.central.biblioteca, "listar", return_value=[]):
+            self._selecionar(self._resultado())
+        self.assertIn("Ainda não está na biblioteca",
+                      self.app.pesquisa_detalhe.get())
+        with patch.object(self.central.biblioteca, "listar",
+                          return_value=[musica_de_teste(
+                              origem_url="https://youtu.be/abc12345678")]):
+            self._selecionar(self._resultado())
+        self.assertIn("Já na biblioteca", self.app.pesquisa_detalhe.get())
+
+    def test_miniatura_vem_do_cache_sem_rede(self):
+        with patch("thumbs.obter", return_value=None) as obter, \
+                patch.object(self.app, "_executar",
+                             side_effect=lambda t, c=None, f=None:
+                             c(t()) if c else t()):
+            self._selecionar(self._resultado())
+        self.assertTrue(obter.called)
+        self.assertIn("indisponível", _texto_do_widget(self.app.pesquisa_thumb))
+
+    def test_sem_thumbnail_nao_tenta_baixar(self):
+        with patch("thumbs.obter") as obter:
+            self._selecionar(self._resultado(thumbnail=""))
+        obter.assert_not_called()
+
+
+def _texto_do_widget(widget) -> str:
+    """Texto atual de um rótulo dublê (``configure(text=...)``)."""
+    return str(widget.opcoes.get("text", ""))

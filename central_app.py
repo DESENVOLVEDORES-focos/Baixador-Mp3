@@ -1539,9 +1539,20 @@ class CentralApp:
                    command=lambda: self.mostrar("fila")).pack(side="right")
 
         self._montar_area_playlist(area)
-        self.pesquisa_thumb = tk.Label(area, text="", anchor="w",
-                                       background=self.cores["fundo"])
-        self.pesquisa_thumb.pack(anchor="w")
+
+        detalhe = ttk.Frame(area)
+        detalhe.pack(fill="x", pady=(4, 0))
+        self.pesquisa_thumb = tk.Label(detalhe, text="", anchor="nw",
+                                       background=self.cores["fundo"],
+                                       foreground=self.cores["texto_fraco"])
+        self.pesquisa_thumb.pack(side="left", padx=(0, 8))
+        self.pesquisa_detalhe = tk.StringVar(
+            value="Clique num resultado para ver os detalhes e a miniatura.")
+        ttk.Label(detalhe, textvariable=self.pesquisa_detalhe,
+                  style="Fraco.TLabel", justify="left",
+                  wraplength=560).pack(side="left", anchor="w")
+        self.arvore_resultados.bind(
+            "<<TreeviewSelect>>", lambda _e: self._mostrar_detalhes_resultado())
 
     def _montar_area_playlist(self, area: Any) -> None:
         quadro = ttk.Labelframe(area, text="Itens da playlist aberta")
@@ -1674,6 +1685,71 @@ class CentralApp:
                 gravar()
         except Exception:
             pass
+
+    def _mostrar_detalhes_resultado(self) -> None:
+        """Miniatura + ficha do resultado selecionado (nada é baixado)."""
+        indices = self._indices_selecionados(self.arvore_resultados)
+        if not indices:
+            return
+        resultado = self._resultados[indices[0]]
+        linhas = [f"{getattr(resultado, 'titulo', '')}"]
+        linhas.append(f"{getattr(resultado, 'tipo_legivel', 'Vídeo')} · "
+                      f"{getattr(resultado, 'canal', 'canal não informado') or 'canal não informado'}")
+        duracao = getattr(resultado, "duracao", None)
+        if duracao:
+            linhas.append(f"Duração: {getattr(resultado, 'duracao_formatada', '')}"
+                          + (" (compilado/mix longo)" if duracao > 3600 else ""))
+        else:
+            linhas.append("Duração: o YouTube não informou")
+        if getattr(resultado, "quantidade", None):
+            linhas.append(f"Playlist com {resultado.quantidade} vídeos")
+        linhas.append("Canal verificado pelo YouTube"
+                      if getattr(resultado, "canal_verificado", False)
+                      else "Canal não verificável pelo YouTube")
+        linhas.append("Já na biblioteca" if self._ja_na_biblioteca(resultado)
+                      else "Ainda não está na biblioteca")
+        url = str(getattr(resultado, "url", "") or "")
+        if url:
+            linhas.append(url)
+        self.pesquisa_detalhe.set("\n".join(linhas))
+        self._mostrar_miniatura_resultado(resultado)
+
+    def _ja_na_biblioteca(self, resultado: Any) -> bool:
+        url = str(getattr(resultado, "url", "") or "")
+        if not url:
+            return False
+        try:
+            return any(m.origem_url == url
+                       for m in self.central.biblioteca.listar())
+        except Exception:
+            return False
+
+    def _mostrar_miniatura_resultado(self, resultado: Any) -> None:
+        """Baixa a miniatura do vídeo para o cache e mostra (falha em silêncio)."""
+        url = str(getattr(resultado, "thumbnail", "") or "")
+        if not url:
+            self.pesquisa_thumb.image = None  # type: ignore[attr-defined]
+            self.pesquisa_thumb.configure(image="", text="sem miniatura")
+            return
+        self.pesquisa_thumb.configure(text="carregando miniatura...", image="")
+
+        def trabalho() -> Any:
+            from thumbs import obter
+
+            return obter(url, self.central.config.dados)
+
+        def concluir(caminho: Any) -> None:
+            imagem = _miniatura(caminho, (200, 112)) if caminho else None
+            if imagem is None:
+                self.pesquisa_thumb.configure(image="", text="miniatura indisponível")
+                return
+            self.pesquisa_thumb.image = imagem  # type: ignore[attr-defined]
+            self.pesquisa_thumb.configure(image=imagem, text="")
+
+        try:
+            self._executar(trabalho, concluir)
+        except Exception:
+            self.pesquisa_thumb.configure(image="", text="miniatura indisponível")
 
     def _indices_selecionados(self, arvore: Any) -> list[int]:
         indices = []
