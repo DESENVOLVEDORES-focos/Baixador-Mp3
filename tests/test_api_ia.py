@@ -72,7 +72,9 @@ class TestImportacaoDaChave(unittest.TestCase):
         # A cópia guarda só a chave, não o arquivo inteiro.
         self.assertEqual(info.caminho.read_text(encoding="utf-8").strip(),
                          "sk-teste-1234567890abcdef")
-        self.assertTrue(str(info.caminho).startswith(self.dados.name))
+        # No Windows o temp vem como RUNNER~1: comparar pelos diretórios reais,
+        # não por prefixo de texto (o mesmo erro já apareceu antes no CI).
+        self.assertTrue(os.path.samefile(info.caminho.parent, self.dados.name))
 
     def test_arquivo_api_txt_nao_e_marcado_como_renomeado(self):
         origem = self.raiz / "api.txt"
