@@ -393,3 +393,42 @@ depois. A prévia resolve na seleção, não no arrependimento.
    corrigido para dentro do `with`).
 4. `AdaptadorMetadados` não passava a configuração do núcleo ao processador —
    sem ela o `api.txt` da pasta de dados não era encontrado.
+
+## 2026-11-17 — Central Musical: do esqueleto à tela inteira (v6.0)
+
+### O que foi construído e **como** cada parte foi verificada
+
+| Módulo | Responsabilidade | Como foi verificado |
+| --- | --- | --- |
+| `biblioteca.py` | SQLite (`biblioteca.db`) a partir das tags reais | 3 MP3 gerados pelo FFmpeg com ID3 gravado por Mutagen: reindexar não duplica, `legiao` acha `Legião`, ordenação por ano, `artistas()` soma 2, `duplicatas()` acha o par, favorito sobrevive a reabrir |
+| `selecao.py` | cesta acumulativa em `selecao.json` | itens de 3 pesquisas diferentes, duplicata recusada, mesmo vídeo em `mp4` aceito, reordenar/remover/limpar, arquivo corrompido não derruba |
+| `gerenciador.py` | fila 1–4 com 8 estados | 5 downloads simultâneos=2 → 5 concluídos; pausa real interrompe o ativo; cancelar não deixa `.part`; exceção inesperada vira item `falhou` |
+| `reprodutor.py` | player via `ffplay` do FFmpeg embutido | comando inspecionado: retomada usa `-ss` na posição salva; sem `ffplay` devolve `False` e avisa `sem_ffplay` (nunca finge) |
+| `colecoes.py` | metadados/capa em lote | processador injetado: “nada novo” quando a fonte não confirma; capa só entra com confirmação |
+| `central.py` | fachada única da UI | fluxo completo: cesta → download → biblioteca → playlist → favoritos → player, com arquivos reais |
+| `central_app.py` | as 10 páginas + player fixo | Tk simulado monta **cada** página; 83 `command=` checados um a um contra métodos existentes; nenhum botão sem comando |
+| `audio.py` | verificação e normalização | MP3 de 8 s normalizado ganha ~1/3 de tamanho e mantém a duração; MP3 de 1 s é recusado com o motivo |
+
+### Defeitos encontrados e corrigidos durante a validação
+
+1. **`iniciar_downloads` não baixava nada** quando os itens estavam só na cesta
+   (a tela mostrava fila vazia e o botão não reclamava). Agora a cesta é levada
+   para a fila antes de começar, e o retorno soma as duas coisas.
+2. **Download concluído sem entrar na biblioteca** quando o nome publicado
+   diferia do esperado. O caminho agora é conferido no disco e, se preciso,
+   procurado pelo `mtime` do início do item.
+3. **Item vindo de playlist sem origem na cesta** — não agrupava. Itens já
+   montados passaram a herdar o rótulo de origem.
+4. **Vazamento de ambiente entre testes**: `Central` publica
+   `BAIXADOR_SEM_CAPA`/`BAIXADOR_METADATA_MODULE`; isso fazia
+   `test_ia2::test_processar_mp3_no_proprio_caminho_via_adaptador_da_ia1`
+   falhar sem relação aparente. Teste novo isola e garante a restauração.
+5. Expressão morta `if False` no toque de álbum e variável `this_atual` inútil.
+
+### Limite honesto deste ambiente
+
+`tkinter` não existe no sandbox (sem root para instalar o pacote `tk`), então a
+janela **real** não foi aberta aqui. A cobertura usa Tk simulado, que pega
+assinatura de widget, atributo inexistente, método faltando e página vazia — não
+pega geometria/aparência. A primeira execução no Windows continua sendo
+necessária para avaliar o visual.
