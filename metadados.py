@@ -237,6 +237,14 @@ class ProcessadorMusical:
             "identificado": info.fonte not in {"nome_do_arquivo",
                                                "resultado_da_pesquisa"},
         }
+        # Relato honesto do que aconteceu, para a interface e o histórico:
+        # campos confirmados por API, campos que vieram só do vídeo, e quais
+        # provedores falharam (rede bloqueada, API fora do ar, sem chave).
+        erros = list(getattr(self.identificador, "ultimos_erros", []) or [])
+        self.ultimo_resumo["provedores_com_erro"] = erros
+        self.ultimo_resumo["campos_confirmados"] = [
+            campo for campo in ("album", "ano", "genero")
+            if getattr(info, campo, None)]
         log.info("Metadados gravados em %s: %s", caminho.name, self.ultimo_resumo)
         return None
 

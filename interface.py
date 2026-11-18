@@ -125,7 +125,9 @@ class ControladorInterface:
         sem dado confirmado, devolve ``{}`` — a interface diz explicitamente
         "não confirmado" em vez de inventar informação musical.
         """
-        processador = getattr(self.aplicacao.metadados, "_processador", None)
+        metadados = self.aplicacao.metadados
+        processador = (getattr(metadados, "processador_real", None)
+                       or getattr(metadados, "_processador", None))
         resumo = getattr(processador, "ultimo_resumo", None)
         return dict(resumo) if isinstance(resumo, dict) else {}
 
@@ -261,7 +263,15 @@ def _resumo_texto(resumo: dict[str, Any]) -> str:
         partes.append(f"{capa} · fonte: {fonte}")
     else:
         partes.append(f"{capa} · identificação não confirmada "
-                      "(apenas o nome do arquivo)")
+                      "(apenas o título/canal do vídeo)")
+    # Quantos provedores falharam, sem despejar stack trace na tela: o detalhe
+    # fica no histórico (sanitizado) para diagnóstico.
+    erros = resumo.get("provedores_com_erro") or []
+    if erros:
+        nomes = sorted({str(erro).split(":", 1)[0] for erro in erros})
+        partes.append("APIs indisponíveis: " + ", ".join(nomes))
+    if resumo.get("identificado") is False:
+        partes.append("Álbum/ano/gênero não confirmados")
     return " | ".join(partes)
 
 

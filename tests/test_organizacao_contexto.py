@@ -210,8 +210,12 @@ class TestOrganizacaoPorAlbum(unittest.TestCase):
         config = Configuracoes(raiz=Path(temp.name))
         config = config.__class__(**{**config.__dict__, "organizar_por_album": True})
         app = Aplicacao(config)
-        app.metadados = SimpleNamespace(_processador=SimpleNamespace(
-            ultimo_resumo=resumo))  # type: ignore[assignment]
+        # Contrato atual: o adaptador expõe `processador_real` (antes o teste
+        # montava apenas `_processador`, atributo privado).
+        app.metadados = SimpleNamespace(
+            _processador=SimpleNamespace(ultimo_resumo=resumo),
+            processador_real=SimpleNamespace(ultimo_resumo=resumo),
+        )  # type: ignore[assignment]
         config.preparar_diretorios()
         return app, config
 
@@ -402,6 +406,52 @@ class TestCookiesVencidos(unittest.TestCase):
         info = status(Configuracoes(raiz=raiz))
         self.assertEqual(info.expirados_do_youtube, 0)
         self.assertIn("pronto", info.mensagem)
+
+
+class TestRelatoDaIdentificacao(unittest.TestCase):
+    """O usuário precisa saber o que foi confirmado e o que faltou."""
+
+    def _app(self, resumo):
+        from configuracoes import Configuracoes
+        from musica import Aplicacao
+
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        app = Aplicacao(Configuracoes(raiz=Path(temp.name)))
+        app.metadados = SimpleNamespace(
+            _processador=SimpleNamespace(ultimo_resumo=resumo),
+            processador_real=SimpleNamespace(ultimo_resumo=resumo),
+        )  # type: ignore[assignment]
+        return app
+
+    def test_tudo_confirmado_nao_gera_aviso(self):
+        app = self._app({"identificado": True, "album": "ANATO", "ano": 1975,
+                         "genero": "Rock", "capa_incorporada": True,
+                         "campos_confirmados": ["album", "ano", "genero"],
+                         "provedores_com_erro": []})
+        texto = app._relato_da_identificacao()
+        self.assertIn("Identificado", texto)
+        self.assertIn("Capa incorporada", texto)
+
+    def test_sem_confirmacao_diz_que_usa_so_o_video(self):
+        app = self._app({"identificado": False, "campos_confirmados": [],
+                         "capa_incorporada": False, "provedores_com_erro": []})
+        texto = app._relato_da_identificacao()
+        self.assertIn("Não confirmado", texto)
+        self.assertIn("título e o canal do vídeo", texto)
+        self.assertIn("Sem capa", texto)
+
+    def test_apis_fora_do_ar_sao_nomeadas(self):
+        app = self._app({"identificado": False, "campos_confirmados": [],
+                         "provedores_com_erro": ["itunes: timeout",
+                                                 "deezer: rede"]})
+        texto = app._relato_da_identificacao()
+        self.assertIn("itunes", texto)
+        self.assertIn("deezer", texto)
+
+    def test_sem_resumo_nao_quebra(self):
+        app = self._app({})
+        self.assertEqual(app._relato_da_identificacao(), "")
 
 
 class TestContextoMidia(unittest.TestCase):

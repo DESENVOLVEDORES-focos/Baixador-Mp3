@@ -266,3 +266,24 @@ depois. A prévia resolve na seleção, não no arrependimento.
 - O trecho é sempre temporário e apagado; nunca aparece em `Musicas\`.
 - Análise de risco é textual e explicada: sem promessa de acertar tudo, mas
   sem inventar "é ao vivo" quando não há indício.
+
+### Identificação: como saber se funcionou
+- Validação com as APIs reais **bloqueadas** (o sandbox só libera GitHub/PyPI):
+  `TLS/SSL connection has been closed` nos três provedores. Isso permitiu testar
+  justamente o caminho mais importante e menos visível: o que acontece quando a
+  identificação **não** confirma nada.
+- Resultado antes: `[OK] MP3 concluído` e nada mais. Depois:
+  *"Não confirmado pelas APIs de música: as tags usam apenas o título e o canal
+  do vídeo. Sem capa: nenhuma fonte confiável devolveu imagem. APIs
+  indisponíveis: deezer, itunes, musicbrainz."*
+- Três defeitos de arquitetura encontrados nesse caminho:
+  1. `preferencias.aplicar_ao_ambiente` fixa `modulo_metadados`, então o
+     adaptador nunca via o `ultimo_resumo` do processador real.
+  2. `_AdaptadorFuncao` guardava o processador num atributo cujo nome colidia
+     com a propriedade do adaptador (`processador` × `self._processador`) — a
+     propriedade caía num `getattr` silencioso e devolvia o próprio wrapper.
+  3. `_relato_da_identificacao` lia `_processador` (privado) em vez do contrato
+     público `processador_real`.
+- Estado final verificado: tags corretas vindas do vídeo
+  (`titulo=Tempo Perdido`, `artista=Legiao Urbana`), capa ausente por falta de
+  fonte, e relato dizendo isso — sem inventar álbum/ano/gênero.

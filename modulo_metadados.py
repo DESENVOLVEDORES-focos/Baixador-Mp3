@@ -18,5 +18,9 @@ Este arquivo é só a fachada do contrato: a implementação vive em
 from __future__ import annotations
 
 from metadados import processar_mp3
+# O adaptador do núcleo reaproveita este processador para saber o que a
+# identificação confirmou (``ultimo_resumo``) e quais APIs falharam. O contrato
+# continua sendo apenas ``processar_mp3``; isto é um extra opcional.
+from metadados import criar_processador_padrao
 
-__all__ = ["processar_mp3"]
+__all__ = ["criar_processador_padrao", "processar_mp3"]

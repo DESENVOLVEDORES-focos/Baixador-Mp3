@@ -27,6 +27,20 @@ class AdaptadorMetadados:
     def disponivel(self) -> bool:
         return self._processador is not None
 
+    @property
+    def processador_real(self) -> ProcessadorMetadados | None:
+        """Processador real, quando o módulo é importado por nome.
+
+        ``_AdaptadorFuncao`` embrulha uma função sem estado; já o
+        ``ProcessadorMusical`` guarda ``ultimo_resumo`` (o que foi confirmado e
+        quais APIs falharam), que a interface/histórico precisam relatar.
+        """
+        if self._processador is None:
+            return None
+        # `_AdaptadorFuncao` guarda o processador com estado em `.real`
+        interno = getattr(self._processador, "real", None)
+        return interno if interno is not None else self._processador
+
     def processar_mp3(self, caminho: Path, metadados: Mapping[str, Any]) -> Path:
         if self._processador is None:
             return caminho
@@ -48,8 +62,20 @@ class AdaptadorMetadados:
                 f"O módulo {nome_modulo!r} precisa expor a função processar_mp3(caminho, metadados)."
             )
 
+        # Reaproveita o processador do módulo quando existir, para preservar
+        # ``ultimo_resumo`` (relato de identificação e erros de API).
+        interno = (getattr(modulo, "criar_processador_padrao", None)
+                   or getattr(modulo, "ProcessadorMusical", None))
+
         class _AdaptadorFuncao:
+            def __init__(self) -> None:
+                # O módulo já expõe um processador com ``ultimo_resumo``:
+                # usá-lo evita recriar cliente HTTP e perder o relato.
+                self.real = interno() if callable(interno) else None
+
             def processar_mp3(self, caminho: Path, metadados: Mapping[str, Any]) -> Path | None:
+                if self.real is not None:
+                    return self.real.processar_mp3(caminho, metadados)
                 return funcao(caminho, metadados)
 
         return _AdaptadorFuncao()

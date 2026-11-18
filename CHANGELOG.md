@@ -40,11 +40,25 @@ depois de baixar. Agora dá para conferir e ouvir **antes**, sem sujar `Musicas\
 - **"Unable to download webpage: TLS…" era tratado como 404**: falha de rede
   agora é classificada como rede, e `Video unavailable` como indisponível.
 
+### Identificação musical: relato honesto do que foi confirmado
+
+- Depois do download, a interface/histórico passam a informar **o que as APIs
+  confirmaram** (álbum, ano, gênero), se a **capa** foi incorporada e **quais
+  provedores falharam** — em vez de só dizer "concluído".
+- Sem confirmação externa, a mensagem é explícita: *"Não confirmado pelas APIs
+  de música: as tags usam apenas o título e o canal do vídeo."*
+- Para isso, `AdaptadorMetadados.processador_real` expõe o processador com
+  estado (antes o adaptador embrulhava a função e o `ultimo_resumo` se perdia) e
+  `modulo_metadados` reexporta `criar_processador_padrao`.
+- Detectado no caminho: `preferencias.aplicar_ao_ambiente` sempre aponta
+  `BAIXADOR_METADATA_MODULE=modulo_metadados` (a fachada), que era justamente
+  o caso em que o resumo se perdia.
+
 ### Testes
 
 - `tests/test_previa.py`: 24 testes (análise, comandos, execução simulada,
   trecho vazio/grande, limpeza, conversão para MP3).
-- Suíte completa: **159 passed, 1 skipped**; `pyflakes` limpo.
+- Suíte completa: **163 passed, 1 skipped**; `pyflakes` limpo.
 - Validação real (FFmpeg + yt-dlp, mídia local): conferir dados, trecho de 15 s
   gerado a partir de um MP3 de 45 s e pasta temporária apagada ao final.
 

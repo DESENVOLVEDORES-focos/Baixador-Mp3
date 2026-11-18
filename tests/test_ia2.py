@@ -356,7 +356,8 @@ class TestIntegracaoComNucleo(unittest.TestCase):
             info = InfoMusica(titulo="Bohemian Rhapsody", artista="Queen", ano=1975)
             processador = self._processador(info)
             with patch.dict(os.environ, {"BAIXADOR_METADATA_MODULE": "modulo_metadados"}), \
-                    patch("metadados.criar_processador_padrao", return_value=processador):
+                    patch("modulo_metadados.criar_processador_padrao",
+                          return_value=processador, create=True):
                 adaptador = AdaptadorMetadados()  # carrega modulo_metadados pela env
                 self.assertTrue(adaptador.disponivel)
                 adaptador.processar_mp3(mp3, {"url": "https://youtu.be/x", "formato": "mp3"})

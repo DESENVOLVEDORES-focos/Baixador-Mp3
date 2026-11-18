@@ -96,6 +96,7 @@ class Aplicacao:
 
                     dados.update(ContextoMidia.normalizar(contexto).como_metadados())
                     caminho = self.metadados.processar_mp3(caminho, dados)
+                    aviso = self._relato_da_identificacao()
                 except Exception as erro_integracao:
                     aviso = f"Download concluído, mas a integração de metadados falhou: {erro_integracao}"
                     self.historico.registrar(
@@ -133,6 +134,43 @@ class Aplicacao:
             self.ultimo_diagnostico = diagnostico
             return False, diagnostico.texto
 
+    def _resumo_da_identificacao(self) -> dict:
+        """Resumo do processador de metadados (confirmado + erros de API)."""
+        processador = getattr(self.metadados, "processador_real", None)
+        if processador is None:
+            return {}
+        resumo = getattr(processador, "ultimo_resumo", None)
+        return dict(resumo) if isinstance(resumo, dict) else {}
+
+    def _relato_da_identificacao(self) -> str:
+        """O que a identificação confirmou, em português e sem enfeite.
+
+        Vazio quando tudo foi confirmado. Caso contrário, diz exatamente o que
+        ficou faltando e por quê (API fora do ar, sem dados, sem chave).
+        """
+        resumo = self._resumo_da_identificacao()
+        if not resumo:
+            return ""
+        confirmados = resumo.get("campos_confirmados") or []
+        erros = resumo.get("provedores_com_erro") or []
+        identificado = bool(resumo.get("identificado"))
+        partes: list[str] = []
+        if identificado:
+            if confirmados:
+                partes.append("Identificado: " + ", ".join(confirmados)
+                              + " confirmado(s) pelas APIs de música.")
+        else:
+            partes.append(
+                "Não confirmado pelas APIs de música: as tags usam apenas o "
+                "título e o canal do vídeo.")
+        if resumo.get("capa_incorporada"):
+            partes.append("Capa incorporada.")
+        else:
+            partes.append("Sem capa: nenhuma fonte confiável devolveu imagem.")
+        if erros:
+            partes.append("APIs indisponíveis: " + "; ".join(erros) + ".")
+        return " ".join(partes)
+
     # -- pré-visualização ---------------------------------------------------
     def preparar_previa(self, url: str) -> Any:
         """Consulta o vídeo (sem baixar) e devolve ``DadosVideo`` + indícios."""
@@ -161,8 +199,7 @@ class Aplicacao:
         if formato != "mp3" or not getattr(self.config, "organizar_por_album", False):
             return caminho
         try:
-            processador = getattr(self.metadados, "_processador", None)
-            resumo = getattr(processador, "ultimo_resumo", None) or {}
+            resumo = self._resumo_da_identificacao()
             relativa = subpasta(resumo)
             if relativa is None:
                 return caminho
