@@ -20,7 +20,9 @@ Regras que o código garante:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -114,6 +116,96 @@ class GerenciadorDownloads:
         self._cancelados: set[int] = set()
         self._thread: threading.Thread | None = None
         self._rodando = False
+        # Quantos itens ainda estão no pós-download (verificar áudio,
+        # normalizar, indexar na biblioteca). ``aguardar`` espera zerar.
+        self._finalizando = 0
+        # Arquivo que sobrevive ao fechamento do programa (retomada amanhã).
+        self._arquivo_fila: Path | None = None
+        self._ultimo_salvo = ""
+
+    # -- persistência entre execuções ---------------------------------------
+    def usar_arquivo(self, caminho: str | Path) -> None:
+        """Liga a gravação automática da fila em disco (``fila.json``)."""
+        self._arquivo_fila = Path(caminho)
+
+    @property
+    def arquivo_fila(self) -> Path | None:
+        return self._arquivo_fila
+
+    def _retrato(self) -> str:
+        """Estado serializado; comparar evita gravar a cada 150 ms de progresso."""
+        with self._lock:
+            dados = [item.__dict__ for item in self._itens]
+        limpos = []
+        for item in dados:
+            # Campos que mudam a cada progresso e não interessam na retomada.
+            limpos.append({chave: valor for chave, valor in item.items()
+                           if chave not in {"percentual", "velocidade", "eta",
+                                            "tamanho", "mensagem",
+                                            "_iniciado_em"}})
+        return json.dumps(limpos, ensure_ascii=False, sort_keys=True, default=str)
+
+    def salvar(self, *, forcar: bool = False) -> bool:
+        """Grava a fila em disco de forma atômica (nunca deixa o arquivo pela metade)."""
+        if self._arquivo_fila is None:
+            return False
+        retrato = self._retrato()
+        if not forcar and retrato == self._ultimo_salvo:
+            return False
+        temporario = self._arquivo_fila.with_suffix(".tmp")
+        try:
+            self._arquivo_fila.parent.mkdir(parents=True, exist_ok=True)
+            temporario.write_text(retrato, encoding="utf-8")
+            os.replace(temporario, self._arquivo_fila)
+            self._ultimo_salvo = retrato
+            return True
+        except Exception as erro:
+            log.info("Não salvou a fila: %s", erro)
+            return False
+
+    def carregar(self) -> dict[str, int]:
+        """Relê a fila salva e diz quantos voltaram para cada estado.
+
+        Itens que estavam **no meio** do download viram ``pausado`` com o motivo
+        (o arquivo parcial não serve e o yt-dlp recomeça aquele item). Nada é
+        iniciado automaticamente: quem decide é o usuário, pelo botão.
+        """
+        if self._arquivo_fila is None or not self._arquivo_fila.is_file():
+            return {}
+        try:
+            bruto = json.loads(self._arquivo_fila.read_text(encoding="utf-8"))
+        except Exception as erro:
+            log.info("Fila ilegível (%s); começando vazia", erro)
+            return {}
+        if not isinstance(bruto, list):
+            return {}
+        contagem: dict[str, int] = {}
+        with self._lock:
+            maior = 0
+            for dados in bruto:
+                if not isinstance(dados, dict) or not dados.get("url"):
+                    continue
+                try:
+                    item = ItemDownload(**{chave: valor for chave, valor
+                                           in dados.items()
+                                           if chave in ItemDownload.__dataclass_fields__
+                                           and chave != "_iniciado_em"})
+                except Exception:
+                    continue
+                if item.estado in ("processando", "convertendo", "metadados"):
+                    item.estado = "pausado"
+                    item.mensagem = "Interrompido ao fechar o programa."
+                if item.estado not in ("aguardando", "pausado", "falhou"):
+                    # Concluído/cancelado não volta para a fila de trabalho.
+                    continue
+                item.percentual = 0.0
+                maior = max(maior, int(item.id or 0))
+                self._itens.append(item)
+                contagem[item.estado] = contagem.get(item.estado, 0) + 1
+            self._proximo_id = max(maior + 1, 1)
+            salvo = self._retrato()
+        self._ultimo_salvo = salvo
+        return contagem
 
     # -- consulta -----------------------------------------------------------
     def listar(self, *, estado: str | None = None) -> list[ItemDownload]:
@@ -144,6 +236,10 @@ class GerenciadorDownloads:
     def rodando(self) -> bool:
         return self._rodando
 
+    def _em_finalizacao(self) -> bool:
+        with self._lock:
+            return self._finalizando > 0
+
     def tem_pendentes(self) -> bool:
         with self._lock:
             return any(item.estado in ("aguardando", "processando", "convertendo",
@@ -165,6 +261,7 @@ class GerenciadorDownloads:
             self._proximo_id += 1
             self._itens.append(item)
         self._notificar(item)
+        self.salvar()
         return item
 
     def adicionar_varios(self, pares: list[tuple[str, str]], **extras: Any) -> int:
@@ -190,6 +287,8 @@ class GerenciadorDownloads:
             adicionados = len(novos)
         for item in novos:
             self._notificar(item)
+        if adicionados:
+            self.salvar()
         return adicionados
 
     # -- controles ----------------------------------------------------------
@@ -288,7 +387,10 @@ class GerenciadorDownloads:
         with self._lock:
             antes = len(self._itens)
             self._itens = [i for i in self._itens if not i.finalizado]
-            return antes - len(self._itens)
+            removidos = antes - len(self._itens)
+        if removidos:
+            self.salvar(forcar=True)
+        return removidos
 
     def limpar(self) -> int:
         with self._lock:
@@ -296,17 +398,26 @@ class GerenciadorDownloads:
                 raise RuntimeError("Há download em andamento; pause ou cancele antes.")
             quantidade = len(self._itens)
             self._itens = []
-            return quantidade
+        self.salvar(forcar=True)
+        return quantidade
 
     def aguardar(self, timeout: float = 30.0) -> bool:
-        """Bloqueia até a fila terminar (usado por testes e pelo fechamento)."""
+        """Bloqueia até a fila terminar **e** os pós-download acabarem.
+
+        Esperar só a thread da fila era uma corrida real: o item já estava
+        marcado como ``concluido``, mas a verificação do áudio e a indexação na
+        biblioteca (``ao_concluir``) ainda rodavam na mesma thread. Quem
+        consultasse a biblioteca em seguida — a tela, o teste ou o fechamento
+        do programa — podia ver o banco **sem a música recém-baixada**.
+        """
         limite = time.monotonic() + timeout
         while time.monotonic() < limite:
-            if not self.tem_pendentes() and not self._pausado:
-                return True
             thread = self._thread
-            if thread is not None and not thread.is_alive():
-                return not self.tem_pendentes()
+            terminou_thread = thread is None or not thread.is_alive()
+            if (not self.tem_pendentes() and not self._pausado
+                    and terminou_thread
+                    and not self._em_finalizacao()):
+                return True
             time.sleep(0.02)
         return False
 
@@ -331,6 +442,7 @@ class GerenciadorDownloads:
                 item.detalhe_erro = detalhe
             item.atualizado_em = _agora()
         self._notificar(item)
+        self.salvar()
 
     def _matar_processo(self, item_id: int) -> None:
         """Mata o yt-dlp do item (via ``Downloader.cancelar_atual``)."""
@@ -410,10 +522,16 @@ class GerenciadorDownloads:
             self._marcar(item, "falhou", mensagem=mensagem or "Falhou.",
                          detalhe=mensagem)
         if callable(self.ao_concluir):
+            with self._lock:
+                self._finalizando += 1
             try:
                 self.ao_concluir(item)
             except Exception:
                 pass
+            finally:
+                with self._lock:
+                    self._finalizando = max(0, self._finalizando - 1)
+                self.salvar(forcar=True)
 
 
     def _procurar_recem_baixado(self, item: ItemDownload) -> str:

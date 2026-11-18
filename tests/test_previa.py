@@ -111,9 +111,15 @@ class TestComandosDaPrevia(unittest.TestCase):
         self.assertIn(str(executavel), comando)
 
     def test_amostra_nao_quebra_sem_ffmpeg(self):
-        comando = self.previa.construir_comando_amostra(
-            "https://youtu.be/abc", Path(self.temp.name) / "p")
+        # O teste não pode depender de existir um ffmpeg no PATH da máquina:
+        # isola o "sem FFmpeg" de verdade, senão passa no CI e falha em quem tem.
+        with patch.object(Configuracoes, "caminho_ffmpeg",
+                          side_effect=FileNotFoundError("sem ffmpeg")):
+            comando = self.previa.construir_comando_amostra(
+                "https://youtu.be/abc", Path(self.temp.name) / "p")
         self.assertNotIn("--ffmpeg-location", comando)
+        # A prévia continua montada: o yt-dlp decide se consegue cortar.
+        self.assertIn("--download-sections", comando)
 
 
 class TestExecucaoDaPrevia(unittest.TestCase):

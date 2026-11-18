@@ -471,3 +471,28 @@ class TestNadaDeBotaoMorto(unittest.TestCase):
         self.assertGreaterEqual(len(com_acao), 30)
         self.assertEqual([w.kwargs.get("text") for w in sem_acao], [],
                          "texto clicável sem comando = botão decorativo")
+
+
+class TestFilaRecuperadaNaTela(TestCentralApp):
+    """A página Fila mostra o que voltou da sessão anterior."""
+
+    def test_botao_retomar_fila_salva_existe_e_funciona(self):
+        app = self.app
+        app.mostrar("fila")
+        self.assertTrue(hasattr(app, "_retomar_fila_salva"))
+        self.central.fila_recuperada = {"pausado": 2}
+        with patch.object(self.central, "retomar_fila_salva", return_value=2) as acao:
+            app._retomar_fila_salva()
+        acao.assert_called_once()
+        self.assertIn("2 download", app.status_var.get())
+        self.central.fila_recuperada = {}
+
+    def test_resumo_mostra_sessao_anterior(self):
+        app = self.app
+        self.central.gerenciador.adicionar("https://y/antiga", "mp3")
+        self.central.fila_recuperada = {"aguardando": 1}
+        app.mostrar("fila")
+        app._atualizar_fila()
+        self.assertIn("sessão anterior", app.fila_resumo_var.get())
+        self.central.fila_recuperada = {}
+        self.central.gerenciador.limpar()

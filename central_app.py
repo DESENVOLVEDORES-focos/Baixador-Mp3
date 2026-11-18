@@ -533,6 +533,8 @@ class CentralApp:
                    command=self._pausar_downloads).pack(side="left", padx=4)
         ttk.Button(controles, text="⏵ Retomar",
                    command=self._retomar_downloads).pack(side="left")
+        ttk.Button(controles, text="↻ Retomar fila salva",
+                   command=self._retomar_fila_salva).pack(side="left", padx=4)
         ttk.Button(controles, text="✖ Cancelar item",
                    command=self._cancelar_item).pack(side="left", padx=4)
         ttk.Button(controles, text="Cancelar todos",
@@ -602,6 +604,16 @@ class CentralApp:
         quantidade = self.central.iniciar_downloads()
         self.definir_status(f"{quantidade} item(ns) na fila — baixando "
                             f"{self.central.gerenciador.simultaneos} por vez.")
+
+    def _retomar_fila_salva(self) -> None:
+        """Continua o que ficou pendente da última vez que o programa fechou."""
+        quantidade = self.central.retomar_fila_salva()
+        if quantidade:
+            self.definir_status(
+                f"{quantidade} download(s) da sessão anterior retomado(s).")
+        else:
+            self.definir_status("Nada pendente da sessão anterior.")
+        self._atualizar_fila()
 
     def _pausar_downloads(self) -> None:
         self.central.pausar_downloads()
@@ -719,6 +731,14 @@ class CentralApp:
             f"{resumo.get('concluido', 0)} concluído(s) · "
             f"{resumo.get('falhou', 0)} falha(s) · "
             f"{resumo.get('pausado', 0)} pausado(s)")
+        recuperados = self.central.fila_salva()
+        if recuperados and resumo.get("total"):
+            partes = [f"{qtd} {estado}" for estado, qtd in recuperados.items()
+                      if qtd]
+            if partes:
+                self.fila_resumo_var.set(
+                    self.fila_resumo_var.get()
+                    + "  ·  da sessão anterior: " + ", ".join(partes))
         for item in self.arvore_cesta.get_children():
             self.arvore_cesta.delete(item)
         itens = self.central.selecao.listar()
@@ -2152,7 +2172,8 @@ def iniciar(configuracoes: Any = None) -> None:
     try:
         app.raiz.mainloop()
     finally:
-        app.central.reprodutor.parar(silencioso=True)
+        # Uma única saída: grava a fila pendente e para o áudio.
+        app.central.fechar()
 
 
 if __name__ == "__main__":

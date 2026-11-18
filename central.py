@@ -56,6 +56,14 @@ class Central(ServicosBase):
             ao_concluir=self._ao_concluir_download,
         )
         self.fila_nucleo = FilaDownloads(self.config)
+        # A fila sobrevive ao fechamento do programa (retomada no dia seguinte).
+        self.gerenciador.usar_arquivo(self.config.dados / "fila.json")
+        self.fila_recuperada: dict[str, int] = {}
+        try:
+            self.fila_recuperada = self.gerenciador.carregar()
+        except Exception as erro:  # fila ilegível nunca impede abrir o app
+            log.info("Fila anterior não pôde ser lida: %s", erro)
+            self.fila_recuperada = {}
         from atualizacao import localizar_ffplay as _localizar
 
         # Guardado para a tela de configurações dizer a verdade sobre o áudio.
@@ -204,6 +212,29 @@ class Central(ServicosBase):
         return adicionados
 
     # -- downloads ----------------------------------------------------------
+    def retomar_fila_salva(self) -> int:
+        """Continua a fila que ficou pendente quando o programa fechou.
+
+        ``retomar()`` já trata o caso real: itens ``pausado`` (incluindo os
+        interrompidos ao fechar) voltam para ``aguardando`` e a thread recomeça.
+        """
+        return self.gerenciador.retomar()
+
+    def fila_salva(self) -> dict[str, int]:
+        """Resumo do que foi recuperado do ``fila.json`` na abertura."""
+        return dict(self.fila_recuperada)
+
+    def fechar(self) -> None:
+        """Grava a fila antes de a janela sumir (chamado ao fechar o app)."""
+        try:
+            self.gerenciador.salvar(forcar=True)
+        except Exception as erro:
+            log.info("Não salvou a fila ao fechar: %s", erro)
+        try:
+            self.reprodutor.parar(silencioso=True)
+        except Exception:
+            pass
+
     def iniciar_downloads(self) -> int:
         """Começa a baixar. Se a cesta ainda tem itens, ela vira a fila antes.
 
