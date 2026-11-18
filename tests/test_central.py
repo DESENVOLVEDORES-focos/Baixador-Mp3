@@ -362,6 +362,7 @@ class TestPosProcessamento(unittest.TestCase):
         class Falso:
             verificar_audio = True
             normalizar_volume = True
+            replaygain = False
 
             def caminho_ffmpeg(self):
                 return ffmpeg
@@ -396,6 +397,52 @@ class TestPosProcessamento(unittest.TestCase):
         self.assertEqual(chamadas, ["verificar", "normalizar"])
         self.assertIn("verificado", item.mensagem)
         self.assertEqual(central.biblioteca.contar(), 1)
+
+    def test_central_grava_replaygain_quando_ligado(self):
+        """A preferência ligada faz a Central medir e gravar o ReplayGain."""
+        from unittest.mock import patch as _patch
+
+        from gerenciador import ItemDownload
+
+        central = Central(self.config, Preferencias(
+            metadados_ativos=False, buscar_capas=False,
+            sincronizar_ao_abrir=False, replaygain=True))
+        arquivo = self._mp3("rg.mp3")
+        item = ItemDownload(url="https://y/rg", formato="mp3", id=1,
+                            caminho=str(arquivo), estado="concluido",
+                            mensagem="Concluído.")
+        falso = self._com_ffmpeg_do_sandbox()
+        falso.replaygain = True
+        central.config = falso
+        medidos = []
+
+        def _falso(caminho, ffmpeg=None, **k):
+            medidos.append(caminho)
+            return True, "ReplayGain gravado: +1.00 dB"
+
+        with _patch("audio.aplicar_replaygain", side_effect=_falso):
+            central._pos_processar(item)
+        self.assertEqual(len(medidos), 1)
+        self.assertIn("ReplayGain", item.mensagem)
+
+    def test_central_nao_grava_replaygain_desligado(self):
+        from unittest.mock import patch as _patch
+
+        from gerenciador import ItemDownload
+
+        central = Central(self.config, Preferencias(
+            metadados_ativos=False, buscar_capas=False,
+            sincronizar_ao_abrir=False, replaygain=False))
+        arquivo = self._mp3("sem_rg.mp3")
+        item = ItemDownload(url="https://y/sem", formato="mp3", id=1,
+                            caminho=str(arquivo), estado="concluido",
+                            mensagem="Concluído.")
+        falso = self._com_ffmpeg_do_sandbox()
+        falso.replaygain = False
+        central.config = falso
+        with _patch("audio.aplicar_replaygain") as aplicar:
+            central._pos_processar(item)
+        aplicar.assert_not_called()
 
 
 class TestAmbienteNaoVaza(unittest.TestCase):

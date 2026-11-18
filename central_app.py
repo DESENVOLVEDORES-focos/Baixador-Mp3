@@ -2082,6 +2082,11 @@ class CentralApp:
         ttk.Checkbutton(audio,
                         text="Normalizar volume ao terminar (EBU R128, -16 LUFS)",
                         variable=self.config_normalizar).pack(anchor="w", padx=6, pady=2)
+        self.config_replaygain = tk.BooleanVar(
+            value=bool(getattr(prefs, "replaygain", False)))
+        ttk.Checkbutton(audio,
+                        text="Gravar ReplayGain (mede o volume e nivela no player)",
+                        variable=self.config_replaygain).pack(anchor="w", padx=6, pady=2)
         self.config_verificar = tk.BooleanVar(
             value=bool(getattr(prefs, "verificar_audio", True)))
         ttk.Checkbutton(audio,
@@ -2195,6 +2200,7 @@ class CentralApp:
                 buscar_capas=bool(self.config_capas.get()),
                 normalizar_volume=bool(self.config_normalizar.get()),
                 verificar_audio=bool(self.config_verificar.get()),
+                replaygain=bool(self.config_replaygain.get()),
                 duracao_maxima_min=int(self.config_teto.get() or 0),
                 filtrar_ao_vivo=bool(self.config_ao_vivo.get()),
                 sincronizar_ao_abrir=bool(self.config_sincronizar.get())))

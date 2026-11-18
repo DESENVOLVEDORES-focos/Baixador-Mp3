@@ -76,8 +76,8 @@ class ConfigMetadados:
 def _carregar_mutagen():
     try:
         from mutagen.id3 import (  # type: ignore
-            APIC, ID3, TALB, TCON, TDRC, TIT2, TPE1, TPE2, TPUB, TRCK, TSRC,
-            ID3NoHeaderError,
+            APIC, ID3, TALB, TCOM, TCON, TDRC, TIT2, TPE1, TPE2, TPOS, TPUB,
+            TRCK, TSRC, TXXX, ID3NoHeaderError,
         )
     except ImportError as erro:
         raise ErroMetadados(
@@ -87,6 +87,7 @@ def _carregar_mutagen():
         "ID3": ID3, "ID3NoHeaderError": ID3NoHeaderError, "APIC": APIC,
         "TIT2": TIT2, "TPE1": TPE1, "TPE2": TPE2, "TALB": TALB, "TCON": TCON,
         "TDRC": TDRC, "TRCK": TRCK, "TPUB": TPUB, "TSRC": TSRC,
+        "TCOM": TCOM, "TPOS": TPOS, "TXXX": TXXX,
     }
 
 
@@ -116,18 +117,69 @@ def aplicar_metadados(caminho: Path, info: InfoMusica, capa: bytes | None = None
     _definir("TCON", info.genero)
     _definir("TPUB", info.gravadora)
     _definir("TSRC", info.isrc)
+    _definir("TCOM", getattr(info, "compositor", None))
     audio.delall("TRCK")
     if info.faixa:
         faixa = str(info.faixa)
         if info.total_faixas:
             faixa = f"{info.faixa}/{info.total_faixas}"
         audio.add(frames["TRCK"](encoding=3, text=faixa))
+    # TPOS = disco/total (só grava quando o dado veio de fonte real).
+    audio.delall("TPOS")
+    disco = getattr(info, "disco", None)
+    if disco:
+        posicao = str(disco)
+        if getattr(info, "total_discos", None):
+            posicao = f"{disco}/{info.total_discos}"
+        audio.add(frames["TPOS"](encoding=3, text=posicao))
     if capa:
         imagem = validar_imagem(capa)
         audio.delall("APIC")
         audio.add(frames["APIC"](
             encoding=3, mime=imagem.mime, type=3, desc="Capa", data=capa))
     audio.save(caminho, v2_version=3)
+
+
+def gravar_txxx(caminho: Path, campos: Mapping[str, str] | None = None) -> list[str]:
+    """Grava frames ``TXXX`` (chave=valor) preservando o que já existe.
+
+    Serve para dados que não têm frame ID3 próprio: ``fonte`` da identificação,
+    ``origem`` (URL do vídeo), ``isrc`` quando o player precisa, etc.
+    Devolve as descrições gravadas (úteis para conferência/teste).
+    """
+    campos = {str(k): str(v) for k, v in (campos or {}).items() if v}
+    if not campos:
+        return []
+    frames = _carregar_mutagen()
+    caminho = Path(caminho)
+    if not caminho.is_file() or caminho.stat().st_size == 0:
+        raise ErroMetadados(f"MP3 inválido para metadados: {caminho}")
+    try:
+        audio = frames["ID3"](caminho)
+    except frames["ID3NoHeaderError"]:
+        audio = frames["ID3"]()
+    for descricao, valor in campos.items():
+        audio.delall(f"TXXX:{descricao}")
+        audio.add(frames["TXXX"](encoding=3, desc=descricao, text=valor))
+    audio.save(caminho, v2_version=3)
+    return sorted(campos)
+
+
+def ler_txxx(caminho: Path) -> dict[str, str]:
+    """Lê de volta os frames ``TXXX`` gravados (``{}`` se não houver)."""
+    frames = _carregar_mutagen()
+    try:
+        audio = frames["ID3"](Path(caminho))
+    except Exception:
+        return {}
+    if audio is None:
+        return {}
+    resultado: dict[str, str] = {}
+    for chave in audio.keys():
+        if chave.startswith("TXXX:"):
+            texto = getattr(audio[chave], "text", None) or []
+            resultado[chave.split(":", 1)[1]] = str(texto[0]) if texto else ""
+    return resultado
 
 
 def ler_metadados(caminho: Path) -> dict[str, Any]:
@@ -144,10 +196,13 @@ def ler_metadados(caminho: Path) -> dict[str, Any]:
     resultado: dict[str, Any] = {}
     mapa = {"TIT2": "titulo", "TPE1": "artista", "TPE2": "artista_album",
             "TALB": "album", "TCON": "genero", "TPUB": "gravadora",
-            "TRCK": "faixa", "TYER": "ano", "TDRC": "ano"}
+            "TRCK": "faixa", "TYER": "ano", "TDRC": "ano", "TCOM": "compositor",
+            "TPOS": "disco"}
     for chave, nome in mapa.items():
         if chave in audio:
             resultado[nome] = str(audio[chave].text[0]) if audio[chave].text else ""
+    if "TSRC" in audio and getattr(audio["TSRC"], "text", None):
+        resultado["isrc"] = str(audio["TSRC"].text[0])
     capas = audio.getall("APIC")
     resultado["tem_capa"] = bool(capas)
     if capas:
@@ -275,6 +330,17 @@ class ProcessadorMusical:
                 log.warning("Busca de capa falhou para %s: %s", caminho.name, erro)
 
         aplicar_metadados(caminho, info, capa)
+        # TXXX: o que não tem frame próprio mas o usuário precisa saber depois —
+        # de onde veio a identificação e qual vídeo originou o arquivo.
+        try:
+            gravar_txxx(caminho, {
+                "fonte": info.fonte,
+                "origem_url": metadados.get("url") or "",
+                "isrc": info.isrc or "",
+                "musicbrainz_id": info.musicbrainz_id or "",
+            })
+        except Exception as erro:  # TXXX é complemento: não derruba o download
+            log.warning("Não foi possível gravar TXXX em %s: %s", caminho.name, erro)
         self.ultimo_resumo = {
             "titulo": info.titulo, "artista": info.artista, "album": info.album,
             "ano": info.ano, "genero": info.genero, "fonte": info.fonte,

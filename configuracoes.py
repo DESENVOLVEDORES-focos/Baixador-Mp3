@@ -35,6 +35,7 @@ class Configuracoes:
     # Pós-processamento do MP3 com o FFmpeg do programa (audio.py).
     normalizar_volume: bool = False
     verificar_audio: bool = True
+    replaygain: bool = False
     # Teto de duração por item, em minutos (0 = sem limite).
     duracao_maxima_min: int = 0
 

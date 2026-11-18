@@ -131,6 +131,17 @@ class Central(ServicosBase):
         if getattr(self.config, "normalizar_volume", False):
             resultado = normalizar(caminho, ffmpeg=ffmpeg)
             item.mensagem = f"{item.mensagem} {resultado.mensagem}".strip()
+        if getattr(self.config, "replaygain", False):
+            # Mede o volume com ebur128 e grava a tag (não altera o áudio).
+            from audio import aplicar_replaygain
+
+            try:
+                ok, mensagem = aplicar_replaygain(caminho, ffmpeg=ffmpeg)
+            except Exception as erro:
+                ok, mensagem = False, f"ReplayGain não aplicado: {erro}"
+            if not ok:
+                log.info("ReplayGain de %s: %s", caminho.name, mensagem)
+            item.mensagem = f"{item.mensagem} {mensagem}".strip()
 
     # -- pesquisa -----------------------------------------------------------
     def pesquisar(self, consulta: str, tipo: str = "tudo") -> list[Any]:

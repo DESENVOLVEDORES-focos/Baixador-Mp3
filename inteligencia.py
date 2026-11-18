@@ -73,6 +73,9 @@ class InfoMusica:
     isrc: str | None = None
     musicbrainz_id: str | None = None
     deezer_album_id: int | None = None
+    compositor: str | None = None
+    disco: int | None = None
+    total_discos: int | None = None
     fonte: str = ""
     confianca: float = 0.0
 
@@ -81,7 +84,7 @@ class InfoMusica:
         for campo in (
             "album", "ano", "genero", "faixa", "total_faixas",
             "gravadora", "artista_album", "isrc", "musicbrainz_id",
-            "deezer_album_id",
+            "deezer_album_id", "compositor", "disco", "total_discos",
         ):
             if getattr(self, campo) in (None, "") and getattr(outra, campo) not in (None, ""):
                 setattr(self, campo, getattr(outra, campo))
@@ -347,6 +350,19 @@ class ProvedorMusicBrainz:
             tags = [t for t in (gravacao.get("tags") or []) if isinstance(t, dict)]
             if tags:
                 genero = str(max(tags, key=lambda t: t.get("count", 0)).get("name") or "") or None
+            compositor = None
+            for relacao in gravacao.get("artist-relation") or []:
+                if str((relacao or {}).get("type") or "").lower() in (
+                        "writer", "composer", "lyricist"):
+                    nome = str((relacao.get("artist") or {}).get("name") or "")
+                    if nome:
+                        compositor = (f"{compositor}; {nome}" if compositor else nome)
+            disco, total_discos = None, None
+            midias = [m for m in (lancamento.get("media") or []) if isinstance(m, dict)]
+            if midias:
+                posicao = midias[0].get("position")
+                disco = int(posicao) if isinstance(posicao, int) else None
+                total_discos = len(midias) or None
             gravadora = None
             for info in lancamento.get("label-info") or []:
                 rotulo = (info or {}).get("label") or {}
@@ -365,6 +381,9 @@ class ProvedorMusicBrainz:
                 ano=_ano_de(gravacao.get("first-release-date") or lancamento.get("date")),
                 genero=genero.title() if genero else None,
                 gravadora=gravadora,
+                compositor=compositor,
+                disco=disco,
+                total_discos=total_discos,
                 musicbrainz_id=str(lancamento.get("id") or "") or None,
                 fonte=self.nome,
                 confianca=_confianca(consulta, titulo, artistas, bonus=0.05 * nota_api),
@@ -401,6 +420,10 @@ class ProvedorITunes:
                 genero=str(item.get("primaryGenreName") or "") or None,
                 faixa=int(faixa) if isinstance(faixa, int) else None,
                 total_faixas=int(total) if isinstance(total, int) else None,
+                disco=int(item["discNumber"]) if isinstance(
+                    item.get("discNumber"), int) else None,
+                total_discos=int(item["discCount"]) if isinstance(
+                    item.get("discCount"), int) else None,
                 fonte=self.nome,
                 confianca=_confianca(consulta, titulo, artista),
             ))

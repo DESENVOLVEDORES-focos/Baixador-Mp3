@@ -156,6 +156,7 @@ class Preferencias:
     # com o motivo, nunca desaparece sem explicação.
     duracao_maxima_min: int = 0
     filtrar_ao_vivo: bool = True                # desmarcar show/ao vivo ao listar
+    replaygain: bool = False                   # mede o volume e grava o ReplayGain
     verificar_audio: bool = True               # confere o MP3 antes de "concluído"
     notificacoes: bool = True
     volume_reprodutor: int = 80
@@ -281,6 +282,7 @@ def derivar_configuracoes(prefs: Preferencias,
         normalizar_volume=bool(getattr(prefs, "normalizar_volume", False)),
         duracao_maxima_min=int(getattr(prefs, "duracao_maxima_min", 0) or 0),
         verificar_audio=bool(getattr(prefs, "verificar_audio", True)),
+        replaygain=bool(getattr(prefs, "replaygain", False)),
         # "perguntar" é resolvido na interface; no núcleo o padrão seguro é
         # não sobrescrever (a pergunta acontece antes de baixar).
         sobrescrita="pular" if str(prefs.sobrescrita).lower() == "perguntar"
