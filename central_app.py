@@ -60,6 +60,21 @@ def _miniatura(caminho: Path | None, tamanho: tuple[int, int] = (48, 48)) -> Any
         return None
 
 
+def _miniatura_bytes(dados: bytes, tamanho: tuple[int, int] = (48, 48)) -> Any:
+    """``PhotoImage`` a partir dos bytes de uma capa baixada (``None`` sem Pillow)."""
+    try:
+        import io
+
+        from PIL import Image, ImageTk  # type: ignore
+
+        with Image.open(io.BytesIO(dados)) as imagem:
+            imagem = imagem.convert("RGB")
+            imagem.thumbnail(tamanho)
+            return ImageTk.PhotoImage(imagem)
+    except Exception:
+        return None
+
+
 def capa_da_musica(caminho: str | Path, *, cache: Path | None = None) -> Path | None:
     """Extrai a capa embutida para um arquivo temporário (para a tela)."""
     caminho = Path(caminho)
@@ -1141,20 +1156,116 @@ class CentralApp:
                                         padx=8, pady=10)
 
     def _buscar_capa_selecionada(self) -> None:
+        """Busca as capas e **mostra antes de gravar** (o usuário confirma)."""
         musica = self._musica_selecionada()
         if musica is None:
             return
-        self.definir_status("Procurando capa nas fontes públicas...")
+        self.definir_status("Procurando capas nas fontes públicas...")
 
-        def concluir(resultado: Any) -> None:
-            if getattr(resultado, "ok", False):
-                self._atualizar_biblioteca()
-                self._mostrar_capa_biblioteca()
-                self.notificar("Capa", resultado.mensagem)
+        def concluir(candidatos: list[Any]) -> None:
+            if not candidatos:
+                self.notificar(
+                    "Capa",
+                    "Nenhuma capa válida encontrada para este artista/álbum.\n"
+                    "Nada foi gravado no arquivo.", erro=True)
+                self.definir_status("Sem capa confirmada.")
+                return
+            self.definir_status(f"{len(candidatos)} capa(s) encontrada(s).")
+            self._previa_de_capas(musica, candidatos)
+
+        self._executar(lambda: self.central.capa_candidatos(musica), concluir)
+
+    def _previa_de_capas(self, musica: Any, candidatos: list[Any]) -> None:
+        """Janela com as capas encontradas; grava só a que for escolhida."""
+        janela = tk.Toplevel(self.raiz)
+        janela.title("Escolher capa — nada é gravado antes de você confirmar")
+        janela.configure(background=self.cores["fundo"])
+        cabecalho = f"{musica.titulo_exibicao}\n{musica.album or 'álbum não identificado'}"
+        ttk.Label(janela, text=cabecalho, style="Titulo.TLabel").pack(
+            anchor="w", padx=10, pady=(10, 2))
+        ttk.Label(janela,
+                  text="A capa só é incorporada ao MP3 depois do clique em Usar esta capa.",
+                  style="Fraco.TLabel").pack(anchor="w", padx=10, pady=(0, 8))
+
+        grade = ttk.Frame(janela)
+        grade.pack(fill="both", expand=True, padx=10, pady=6)
+        escolhida: dict[str, Any] = {"indice": None}
+        imagens: list[Any] = []
+        marcas: list[tk.StringVar] = []
+
+        def escolher(indice: int) -> None:
+            escolhida["indice"] = indice
+            for posicao, marca in enumerate(marcas):
+                marca.set("● escolhida" if posicao == indice else "")
+
+        for indice, capa in enumerate(candidatos):
+            cartao = ttk.Frame(grade, style="Cartao.TFrame")
+            cartao.grid(row=0, column=indice, padx=6, pady=4, sticky="n")
+            imagem = _miniatura_bytes(capa.dados, (170, 170))
+            if imagem is not None:
+                imagens.append(imagem)  # referência viva: senão o Tk apaga
+                rotulo = tk.Label(cartao, image=imagem, background=self.cores["cartao"])
             else:
-                self.notificar("Capa", resultado.mensagem, erro=True)
+                rotulo = tk.Label(cartao, text="(prévia indisponível)\ninstale o Pillow",
+                                  background=self.cores["cartao"],
+                                  foreground=self.cores["texto_fraco"], width=20, height=8)
+            rotulo.pack(padx=6, pady=6)
+            rotulo.bind("<Button-1>", lambda _e, i=indice: escolher(i))
+            ttk.Label(cartao, text=capa.rotulo, style="Cartao.TLabel",
+                      wraplength=180).pack(padx=6)
+            marca = tk.StringVar(value="")
+            marcas.append(marca)
+            ttk.Label(cartao, textvariable=marca,
+                      style="CartaoTitulo.TLabel").pack(pady=(2, 4))
+            ttk.Button(cartao, text="Usar esta capa",
+                       command=lambda i=indice: escolher(i)).pack(pady=(0, 6))
 
-        self._executar(lambda: self.central.incorporar_capa(musica), concluir)
+        rodape = ttk.Frame(janela)
+        rodape.pack(fill="x", padx=10, pady=(4, 10))
+
+        def usar() -> None:
+            indice = escolhida["indice"]
+            if indice is None:
+                messagebox.showinfo("Capa",
+                                    "Clique em \"Usar esta capa\" na imagem escolhida.",
+                                    parent=janela)
+                return
+            capa = candidatos[indice]
+            janela.destroy()
+            self.definir_status("Incorporando a capa escolhida...")
+
+            def concluir(resultado: Any) -> None:
+                if getattr(resultado, "ok", False):
+                    self._atualizar_biblioteca()
+                    self._mostrar_capa_biblioteca()
+                self.notificar("Capa", resultado.mensagem,
+                               erro=not getattr(resultado, "ok", False))
+
+            self._executar(
+                lambda: self.central.incorporar_capa(musica, imagem=capa.dados),
+                concluir)
+
+        def buscar_sozinho() -> None:
+            janela.destroy()
+            self.definir_status("Procurando capa nas fontes públicas...")
+
+            def concluir(resultado: Any) -> None:
+                if getattr(resultado, "ok", False):
+                    self._atualizar_biblioteca()
+                    self._mostrar_capa_biblioteca()
+                    self.notificar("Capa", resultado.mensagem)
+                else:
+                    self.notificar("Capa", resultado.mensagem, erro=True)
+
+            self._executar(lambda: self.central.incorporar_capa(musica), concluir)
+
+        ttk.Button(rodape, text="Usar esta capa", command=usar).pack(side="left")
+        ttk.Button(rodape, text="Deixar o programa escolher",
+                   command=buscar_sozinho).pack(side="left", padx=6)
+        ttk.Button(rodape, text="Cancelar (não gravar nada)",
+                   command=janela.destroy).pack(side="right")
+        janela.imagens = imagens  # type: ignore[attr-defined]
+        return janela
 
     def _completar_metadados_lote(self) -> None:
         escolhas = self.arvore_biblioteca.selection()

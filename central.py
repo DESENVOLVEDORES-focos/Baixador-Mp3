@@ -396,6 +396,18 @@ class Central(ServicosBase):
                         ) -> ResultadoCobertura:
         return incorporar_capa(self.biblioteca, musica, imagem=imagem)
 
+    def capa_candidatos(self, musica: Musica,
+                        limite: int = 4) -> list[Any]:
+        """Capas encontradas para a música, **sem gravar nada** (prévia)."""
+        from capas import GerenciadorCapas, baixar_candidatos
+
+        if not musica.artista and not musica.album:
+            return []
+        info = InfoMusica(titulo=musica.titulo or "", artista=musica.artista or "",
+                          album=musica.album or "", ano=musica.ano or "")
+        return baixar_candidatos(GerenciadorCapas(), info,
+                                 musica.origem_url or None, limite=limite)
+
     def salvar_metadados(self, musica_id: int, **campos: Any) -> Musica | None:
         """Grava as tags no arquivo **e** no banco (editor manual)."""
         musica = self.biblioteca.obter(musica_id)

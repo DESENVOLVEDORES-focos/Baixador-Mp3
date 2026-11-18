@@ -236,7 +236,64 @@ class GerenciadorCapas:
         return processar_imagem(reserva) if reserva is not None else None
 
 
+@dataclass(frozen=True)
+class CapaEncontrada:
+    """Uma capa baixada e válida, pronta para o usuário decidir."""
+
+    fonte: str
+    url: str
+    largura: int
+    altura: int
+    oficial: bool
+    dados: bytes
+
+    @property
+    def rotulo(self) -> str:
+        selo = "oficial" if self.oficial else "não oficial (miniatura do vídeo)"
+        return f"{self.fonte} · {self.largura}x{self.altura} · {selo}"
+
+
+def baixar_candidatos(gerenciador: "GerenciadorCapas", info: InfoMusica,
+                      url_origem: str | None = None,
+                      thumbnail: str | None = None,
+                      limite: int = 4) -> list[CapaEncontrada]:
+    """Baixa as capas válidas dos candidatos, em ordem de preferência.
+
+    Serve para **mostrar antes de gravar**: a interface exibe as imagens e só
+    incorpora a escolhida. Nada aqui grava no arquivo — e candidato que falha é
+    simplesmente omitido (a lista pode vir vazia, nunca com imagem inventada).
+    """
+    candidatos = gerenciador.candidatos(info, url_origem)
+    if thumbnail and thumbnail.startswith(("http://", "https://")):
+        if all(candidato.url != thumbnail for candidato in candidatos):
+            candidatos.append(CandidatoCapa(thumbnail, "thumbnail-do-video",
+                                            480, oficial=False))
+    encontradas: list[CapaEncontrada] = []
+    vistos: set[str] = set()
+    for candidato in candidatos:
+        if candidato.url in vistos:
+            continue
+        vistos.add(candidato.url)
+        try:
+            dados = gerenciador.cliente.get_bytes(candidato.url)
+            imagem = validar_imagem(dados)
+        except Exception as erro:  # rede/imagem: candidato descartado
+            log.info("Capa %s falhou (%s): %s", candidato.fonte, candidato.url, erro)
+            continue
+        encontradas.append(CapaEncontrada(
+            fonte=candidato.fonte, url=candidato.url,
+            largura=imagem.largura, altura=imagem.altura,
+            oficial=candidato.oficial, dados=dados))
+        if len(encontradas) >= limite:
+            break
+    # Maior primeiro: a capa de álbum confirmada tem prioridade sobre miniatura.
+    encontradas.sort(key=lambda c: (c.oficial, c.largura * c.altura),
+                     reverse=True)
+    return encontradas
+
+
 __all__ = [
-    "CandidatoCapa", "ErroCapa", "GerenciadorCapas", "InfoImagem",
+    "CandidatoCapa", "CapaEncontrada", "ErroCapa", "GerenciadorCapas",
+    "InfoImagem", "baixar_candidatos",
     "extrair_id_youtube", "processar_imagem", "validar_imagem",
 ]

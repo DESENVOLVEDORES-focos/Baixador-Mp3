@@ -17,7 +17,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 _widgets_criados: list = []
@@ -867,3 +867,167 @@ class TestPlayerNaTela(unittest.TestCase):
         self.app._ligar_atalhos()
         self.assertIn("<space>", registrados)
         self.assertIn("<Control-Right>", registrados)
+
+
+def musica_de_teste(**campos):
+    """``Musica`` completa (o dataclass exige todos os campos)."""
+    from biblioteca import Musica
+
+    dados = dict(id=1, caminho="/tmp/nao_existe.mp3", titulo="Faixa",
+                 artista="Artista", album="Álbum", ano="", genero="", faixa="",
+                 duracao=None, tamanho=None, tem_capa=False, favorito=False,
+                 origem_url="", adicionada_em="", atualizada_em="")
+    dados.update(campos)
+    return Musica(**dados)
+
+
+class TestPreviaDeCapa(unittest.TestCase):
+    """A capa é mostrada antes de gravar; cancelar não altera o arquivo."""
+
+    @classmethod
+    def setUpClass(cls):
+        TestCentralApp.setUpClass()
+        cls.app = TestCentralApp.app
+        cls.central = TestCentralApp.central
+
+    @classmethod
+    def tearDownClass(cls):
+        TestCentralApp.tearDownClass()
+
+    @staticmethod
+    def _candidatos():
+        from capas import CapaEncontrada
+
+        def _jpeg(cor: int) -> bytes:
+            from PIL import Image
+            import io
+
+            buffer = io.BytesIO()
+            Image.new("RGB", (600, 600), (cor, 20, 40)).save(buffer, "JPEG")
+            return buffer.getvalue()
+
+        return [
+            CapaEncontrada("itunes", "https://x/1.jpg", 600, 600, True, _jpeg(10)),
+            CapaEncontrada("deezer", "https://x/2.jpg", 1000, 1000, True, _jpeg(90)),
+        ]
+
+    def _musica(self):
+        return musica_de_teste()
+
+    def test_abre_uma_opcao_por_capa(self):
+        del _widgets_criados[:]
+        antes = len(_widgets_criados)
+        self.app._previa_de_capas(self._musica(), self._candidatos())
+        criados = _widgets_criados[antes:]
+        textos = " ".join(str(w.kwargs.get("text", "")) for w in criados)
+        self.assertIn("itunes", textos)
+        # 2 cartões + botão do rodapé (o rótulo de ajuda também cita o texto)
+        self.assertEqual(textos.count("Usar esta capa"), 4)
+        self.assertIn("itunes", textos)
+        self.assertIn("Cancelar", textos)
+
+    def test_cancelar_nao_chama_incorporar(self):
+        candidatos = self._candidatos()
+        with patch.object(self.central, "incorporar_capa") as incorporar:
+            janela = self.app._previa_de_capas(self._musica(), candidatos)
+            janela.destroy()
+        incorporar.assert_not_called()
+
+    def test_escolher_e_usar_incorpora_a_capa_escolhida(self):
+        candidatos = self._candidatos()
+        del _widgets_criados[:]
+        janela = self.app._previa_de_capas(self._musica(), candidatos)
+        botoes = [w for w in _widgets_criados
+                  if w.kwargs.get("text") == "Usar esta capa"
+                  and getattr(w, "tipo", "") == "Button"]
+        self.assertEqual(len(botoes), 3)
+        botoes[1].kwargs["command"]()          # marca a segunda
+        rodape = botoes[-1]                    # botão do rodapé (o que grava)
+        with patch.object(self.app, "_executar",
+                          side_effect=lambda trabalho, concluir=None, falhar=None:
+                          concluir(trabalho()) if concluir else trabalho()), \
+                patch.object(self.app, "_atualizar_biblioteca"), \
+                patch.object(self.app, "_mostrar_capa_biblioteca"), \
+                patch.object(self.central, "incorporar_capa") as incorporar:
+            from colecoes import ResultadoCobertura
+
+            incorporar.return_value = ResultadoCobertura(
+                caminho="/tmp/x.mp3", ok=True, mensagem="Capa incorporada ao MP3.")
+            rodape.kwargs["command"]()
+        incorporar.assert_called_once()
+        self.assertEqual(incorporar.call_args.kwargs["imagem"], candidatos[1].dados)
+        janela.destroy()
+
+    def test_usar_sem_escolher_avisa_e_nao_grava(self):
+        del _widgets_criados[:]
+        janela = self.app._previa_de_capas(self._musica(), self._candidatos())
+        rodape = [w for w in _widgets_criados
+                  if w.kwargs.get("text") == "Usar esta capa"][-1]
+        with patch.object(self.central, "incorporar_capa") as incorporar, \
+                patch.object(TestCentralApp.modulo, "messagebox") as caixa:
+            rodape.kwargs["command"]()
+        incorporar.assert_not_called()
+        caixa.showinfo.assert_called_once()
+        janela.destroy()
+
+    def test_sem_candidatos_avisa_que_nada_foi_gravado(self):
+        with patch.object(self.app, "_executar",
+                          side_effect=lambda trabalho, concluir=None, falhar=None:
+                          concluir(trabalho()) if concluir else trabalho()), \
+                patch.object(self.central, "capa_candidatos", return_value=[]), \
+                patch.object(self.app, "notificar") as notificar, \
+                patch.object(self.central, "incorporar_capa") as incorporar:
+            self.app._buscar_capa_selecionada.__wrapped__ if False else None
+            with patch.object(self.app, "_musica_selecionada",
+                              return_value=self._musica()):
+                self.app._buscar_capa_selecionada()
+        incorporar.assert_not_called()
+        self.assertTrue(notificar.called)
+        self.assertIn("Nada foi gravado", notificar.call_args[0][1])
+
+    def test_com_candidatos_abre_a_previa_sem_gravar(self):
+        with patch.object(self.app, "_executar",
+                          side_effect=lambda trabalho, concluir=None, falhar=None:
+                          concluir(trabalho()) if concluir else trabalho()), \
+                patch.object(self.central, "capa_candidatos",
+                             return_value=self._candidatos()), \
+                patch.object(self.app, "_previa_de_capas") as previa, \
+                patch.object(self.central, "incorporar_capa") as incorporar, \
+                patch.object(self.app, "_musica_selecionada",
+                             return_value=self._musica()):
+            self.app._buscar_capa_selecionada()
+        previa.assert_called_once()
+        incorporar.assert_not_called()
+
+
+class TestCandidatosDeCapaNoCentral(unittest.TestCase):
+    """`Central.capa_candidatos` não grava nada e não inventa fonte."""
+
+    @classmethod
+    def setUpClass(cls):
+        TestCentralApp.setUpClass()
+        cls.central = TestCentralApp.central
+
+    @classmethod
+    def tearDownClass(cls):
+        TestCentralApp.tearDownClass()
+
+    def test_sem_artista_nem_album_nao_consulta_fonte(self):
+        with patch("capas.GerenciadorCapas") as gerenciador:
+            resultado = self.central.capa_candidatos(
+                musica_de_teste(titulo="Só título", artista="", album=""))
+        self.assertEqual(resultado, [])
+        gerenciador.assert_not_called()
+
+    def test_devolve_o_que_as_fontes_entregaram(self):
+        falso = MagicMock()
+        falso.candidatos.return_value = []
+        falso.cliente.get_bytes.return_value = b"nao-e-imagem"
+        with patch("capas.GerenciadorCapas", return_value=falso):
+            resultado = self.central.capa_candidatos(
+                musica_de_teste(titulo="T", artista="A", album="Alb"))
+        self.assertEqual(resultado, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
