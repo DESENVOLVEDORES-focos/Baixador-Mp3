@@ -28,7 +28,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 from urllib.parse import urlsplit
 
 from configuracoes import CONFIG, Configuracoes, argumentos_cookies
@@ -203,6 +203,9 @@ class Downloader:
     def __init__(self, configuracoes: Configuracoes = CONFIG, timeout: int | None = None):
         self.config = configuracoes
         self.timeout = timeout
+        # Processo em andamento (cancelamento pela interface) — um por instância.
+        self._lock_processo = threading.Lock()
+        self._processo_atual: Any = None
 
     # -- montagem dos argumentos -------------------------------------------
     def construir_argumentos(self, url: str, formato: Formato,
@@ -480,6 +483,23 @@ class Downloader:
                             desconhecido=produzido.stem)
         return f"{nome}{extensao}"
 
+    def cancelar_atual(self) -> bool:
+        """Mata o processo do yt-dlp em andamento (botão Cancelar da interface).
+
+        Não deixa arquivo pela metade no destino: o download acontece na pasta de
+        trabalho e só é publicado quando o arquivo final é válido, então matar o
+        processo simplesmente faz o item falhar/cancelar sem lixo em Musicas/.
+        """
+        with self._lock_processo:
+            processo = self._processo_atual
+        if processo is None:
+            return False
+        try:
+            processo.kill()
+            return True
+        except Exception:
+            return False
+
     def _executar(self, argumentos: list[str],
                   ao_progresso: Callable[[Progresso], None] | None
                   ) -> tuple[str, int]:
@@ -511,6 +531,8 @@ class Downloader:
         except FileNotFoundError as erro:
             raise ErroDownload(f"Não foi possível {contexto}: {erro}") from erro
 
+        with self._lock_processo:
+            self._processo_atual = processo
         linhas: list[str] = []
         etapa = ETAPA_BAIXANDO
         excedeu = threading.Event()

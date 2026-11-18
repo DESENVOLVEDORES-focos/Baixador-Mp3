@@ -32,6 +32,9 @@ class Configuracoes:
     organizar_nomes: bool = False
     # Usar Artista/Álbum/ confirmados pela identificação como subpasta.
     organizar_por_album: bool = False
+    # Pós-processamento do MP3 com o FFmpeg do programa (audio.py).
+    normalizar_volume: bool = False
+    verificar_audio: bool = True
 
     @property
     def ferramentas(self) -> Path:

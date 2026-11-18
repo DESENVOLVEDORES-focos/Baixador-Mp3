@@ -140,6 +140,11 @@ class Aplicacao:
 
         return listar(url, limite=limite, config=self.config)
 
+    def cancelar_download(self) -> bool:
+        """Cancela o download em andamento (a interface e o gerenciador usam)."""
+        cancelar = getattr(self.downloader, "cancelar_atual", None)
+        return bool(cancelar()) if callable(cancelar) else False
+
     def baixar_varios(self, urls: list[str], formato: str,
                       ao_progresso: Any = None,
                       politica: str | None = None,

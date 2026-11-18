@@ -144,6 +144,17 @@ class Preferencias:
     organizar_nomes: bool = True
     # Guardar em Artista/Álbum/ quando a identificação musical confirmar
     organizar_por_album: bool = False
+    # ---- Central musical (interface nova) --------------------------------
+    tema: str = "escuro"                       # escuro | claro
+    tamanho_fonte: str = "normal"              # pequeno | normal | grande
+    downloads_simultaneos: int = 2             # 1..4 downloads ao mesmo tempo
+    pasta_biblioteca: str = ""                 # vazio = Musicas/ do núcleo
+    sincronizar_ao_abrir: bool = True          # indexar a pasta ao abrir o app
+    normalizar_volume: bool = False            # loudnorm no MP3 final (FFmpeg)
+    verificar_audio: bool = True               # confere o MP3 antes de "concluído"
+    notificacoes: bool = True
+    volume_reprodutor: int = 80
+    favoritos_artistas: str = ""               # reservado (o banco guarda)
 
     def validar(self) -> None:
         if self.formato_padrao not in ("mp3", "mp4"):
@@ -154,6 +165,14 @@ class Preferencias:
                 "Política de sobrescrita inválida (perguntar/pular/renomear/sobrescrever).")
         if not 1 <= int(self.limite_pesquisa) <= 50:
             raise ValueError("O limite de pesquisa deve estar entre 1 e 50.")
+        if str(self.tema).lower() not in {"escuro", "claro"}:
+            raise ValueError("Tema deve ser 'escuro' ou 'claro'.")
+        if str(self.tamanho_fonte).lower() not in {"pequeno", "normal", "grande"}:
+            raise ValueError("Tamanho de fonte inválido (pequeno/normal/grande).")
+        if not 1 <= int(self.downloads_simultaneos) <= 4:
+            raise ValueError("Downloads simultâneos deve estar entre 1 e 4.")
+        if not 0 <= int(self.volume_reprodutor) <= 100:
+            raise ValueError("Volume deve estar entre 0 e 100.")
         qualidade = str(self.qualidade_mp3).strip()
         if not (qualidade.isdigit() and 0 <= int(qualidade) <= 10) \
                 and not (qualidade.upper().endswith("K") and qualidade[:-1].isdigit()):
@@ -249,6 +268,10 @@ def derivar_configuracoes(prefs: Preferencias,
         qualidade_mp3=str(prefs.qualidade_mp3 or "0"),
         organizar_nomes=bool(getattr(prefs, "organizar_nomes", True)),
         organizar_por_album=bool(getattr(prefs, "organizar_por_album", False)),
+        # Pós-processamento de áudio: aplicado ao arquivo publicado, com o
+        # FFmpeg que o programa já usa (nada de dependência nova).
+        normalizar_volume=bool(getattr(prefs, "normalizar_volume", False)),
+        verificar_audio=bool(getattr(prefs, "verificar_audio", True)),
         # "perguntar" é resolvido na interface; no núcleo o padrão seguro é
         # não sobrescrever (a pergunta acontece antes de baixar).
         sobrescrita="pular" if str(prefs.sobrescrita).lower() == "perguntar"

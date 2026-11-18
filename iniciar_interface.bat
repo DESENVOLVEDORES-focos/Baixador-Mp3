@@ -1,4 +1,9 @@
 @echo off
-rem Compatibilidade: mantido porque o README antigo citava este nome.
-rem Use iniciar.bat (entrada oficial do programa).
-call "%~dp0iniciar.bat"
+rem Abre a interface antiga por abas (a Central Musical e a entrada padrao).
+cd /d "%~dp0"
+where py >nul 2>nul && (
+  py -3 main.py --classica
+) || (
+  python main.py --classica
+)
+if errorlevel 1 pause

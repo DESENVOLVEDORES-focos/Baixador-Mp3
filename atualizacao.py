@@ -22,10 +22,14 @@ import sys
 from dataclasses import dataclass
 
 from configuracoes import CONFIG, Configuracoes
+from reprodutor import localizar_ffplay  # reexportado: a tela consulta aqui
 
 log = logging.getLogger("baixador.atualizacao")
 
 COMANDO_PACOTE = "yt-dlp"
+
+__all__ = ["ResultadoAtualizacao", "atualizar", "versao_instalada",
+           "localizar_ffplay"]
 
 
 @dataclass(frozen=True)

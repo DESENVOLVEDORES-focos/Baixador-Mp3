@@ -1,0 +1,2159 @@
+"""Central Musical — interface moderna em Tkinter (barra lateral + páginas).
+
+Este arquivo contém **só a tela**. Toda a lógica está em ``central.Central``
+(pesquisa, seleção, downloads, biblioteca, playlists, metadados, capas,
+reprodutor). Assim a interface pode ser construída/testada com Tk simulado.
+
+Páginas: INÍCIO, PESQUISAR, PLAYLISTS, FILA DE DOWNLOADS, BIBLIOTECA,
+ARTISTAS, ÁLBUNS, HISTÓRICO, FAVORITOS, CONFIGURAÇÕES — mais a barra do
+reprodutor fixa no rodapé, acessível em qualquer página.
+"""
+
+from __future__ import annotations
+
+import logging
+import queue
+import sys
+import threading
+from dataclasses import replace
+from pathlib import Path
+from typing import Any, Callable
+
+import tema
+from central import Central
+
+log = logging.getLogger("baixador.central.app")
+
+try:  # Tkinter vem com o Python do Windows; em Linux mínimo pode faltar.
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, simpledialog, ttk
+except ImportError:  # pragma: no cover
+    tk = None  # type: ignore[assignment]
+    filedialog = messagebox = simpledialog = ttk = None  # type: ignore[assignment]
+
+PAGINAS = (
+    ("inicio", "  Início", "🏠"),
+    ("pesquisar", "  Pesquisar", "🔍"),
+    ("playlists", "  Playlists", "🎵"),
+    ("fila", "  Fila de downloads", "⬇"),
+    ("biblioteca", "  Biblioteca", "🎧"),
+    ("artistas", "  Artistas", "🎤"),
+    ("albuns", "  Álbuns", "💿"),
+    ("historico", "  Histórico", "🕘"),
+    ("favoritos", "  Favoritos", "★"),
+    ("config", "  Configurações", "⚙"),
+)
+
+
+def _miniatura(caminho: Path | None, tamanho: tuple[int, int] = (48, 48)) -> Any:
+    """PhotoImage quadrada (capa) ou ``None`` sem Pillow/arquivo."""
+    if caminho is None:
+        return None
+    try:
+        from PIL import Image, ImageTk  # type: ignore
+
+        with Image.open(caminho) as imagem:
+            imagem = imagem.convert("RGB")
+            imagem.thumbnail(tamanho)
+            return ImageTk.PhotoImage(imagem)
+    except Exception:
+        return None
+
+
+def capa_da_musica(caminho: str | Path, *, cache: Path | None = None) -> Path | None:
+    """Extrai a capa embutida para um arquivo temporário (para a tela)."""
+    caminho = Path(caminho)
+    if not caminho.is_file():
+        return None
+    try:
+        from mutagen.id3 import ID3
+
+        audio = ID3(str(caminho))
+        capas = audio.getall("APIC")
+        if not capas:
+            return None
+        dados = capas[0].data
+        mime = (capas[0].mime or "image/jpeg").lower()
+        extensao = ".png" if "png" in mime else ".jpg"
+        pasta = cache or (caminho.parent / ".capas")
+        pasta.mkdir(parents=True, exist_ok=True)
+        alvo = pasta / f"{caminho.stem[:60]}{extensao}"
+        if not alvo.is_file() or alvo.stat().st_size != len(dados):
+            alvo.write_bytes(dados)
+        return alvo
+    except Exception:
+        return None
+
+
+class CentralApp:
+    """Janela principal: barra lateral, páginas e player fixo."""
+
+    def __init__(self, central: Central | None = None, raiz: Any | None = None):
+        if tk is None:
+            raise RuntimeError("Tkinter não está disponível nesta instalação.")
+        self.central = central or Central()
+        self.raiz = raiz if raiz is not None else tk.Tk()
+        self.raiz.title("Central Musical — Baixador-Mp3")
+        self.raiz.geometry("1240x820")
+        self.raiz.minsize(1000, 680)
+        prefs = self.central.preferencias
+        self.cores = tema.aplicar(
+            self.raiz, nome=getattr(prefs, "tema", "escuro"),
+            tamanho=getattr(prefs, "tamanho_fonte", "normal"))
+        self.pagina_atual = "inicio"
+        self._botoes_nav: dict[str, Any] = {}
+        self._fila_eventos: queue.Queue = queue.Queue()
+        self._lock = threading.RLock()
+        self._resultados: list[Any] = []
+        self._playlists_busca: list[Any] = []
+        self._playlist_aberta: Any = None
+        self._musicas_biblioteca: list[Any] = []
+        self._musicas_fila: list[Any] = []
+        self._imagens: dict[str, Any] = {}
+
+        self._montar_estrutura()
+        self.central.definir_callbacks(
+            download_mudou=lambda item: self._fila_eventos.put(("download", item, None)),
+            download_concluiu=lambda item: self._fila_eventos.put(("download_fim", item, None)),
+        )
+        self.mostrar("inicio")
+        if getattr(prefs, "sincronizar_ao_abrir", True):
+            threading.Thread(target=self._sincronizar_inicial, daemon=True).start()
+        self.raiz.after(150, self._processar_eventos)
+        self.raiz.after(1000, self._verificar_fim_da_musica)
+
+    # -- infraestrutura -----------------------------------------------------
+    def _montar_estrutura(self) -> None:
+        cores = self.cores
+        self.raiz.configure(background=cores["fundo"])
+        self.raiz.grid_rowconfigure(0, weight=1)
+        self.raiz.grid_columnconfigure(1, weight=1)
+
+        # barra lateral
+        self.lateral = ttk.Frame(self.raiz, style="Barra.TFrame", width=220)
+        self.lateral.grid(row=0, column=0, rowspan=2, sticky="nsw")
+        self.lateral.grid_propagate(False)
+        marca = ttk.Label(self.lateral, text="♪ Central Musical",
+                          style="Titulo.TLabel", background=cores["barra"])
+        marca.pack(anchor="w", padx=16, pady=(18, 2))
+        sub = ttk.Label(self.lateral, text="baixar · organizar · ouvir",
+                        style="Fraco.TLabel", background=cores["barra"])
+        sub.pack(anchor="w", padx=16, pady=(0, 14))
+        for chave, rotulo, _icone in PAGINAS:
+            botao = ttk.Button(self.lateral, text=rotulo, style="Nav.TButton",
+                               command=lambda c=chave: self.mostrar(c))
+            botao.pack(fill="x", padx=8, pady=1)
+            self._botoes_nav[chave] = botao
+        self.contador_cesta = ttk.Label(
+            self.lateral, text="Cesta: 0", style="Fraco.TLabel",
+            background=cores["barra"])
+        self.contador_cesta.pack(anchor="w", padx=16, pady=(16, 4))
+
+        # área principal + rodapé do player
+        self.conteudo = ttk.Frame(self.raiz)
+        self.conteudo.grid(row=0, column=1, sticky="nsew", padx=(12, 12), pady=(10, 4))
+        self.conteudo.grid_rowconfigure(0, weight=1)
+        self.conteudo.grid_columnconfigure(0, weight=1)
+        self.rodape = ttk.Frame(self.raiz)
+        self.rodape.grid(row=1, column=1, sticky="ew", padx=12, pady=(0, 10))
+
+        self.areas: dict[str, Any] = {}
+        for chave, _rotulo, _icone in PAGINAS:
+            area = ttk.Frame(self.conteudo)
+            area.grid(row=0, column=0, sticky="nsew")
+            self.areas[chave] = area
+        self._montar_player()
+        self._montar_status()
+
+    def _montar_status(self) -> None:
+        self.status_var = tk.StringVar(value="Pronto.")
+        barra = ttk.Frame(self.rodape)
+        barra.pack(fill="x", pady=(6, 0))
+        ttk.Label(barra, textvariable=self.status_var,
+                  style="Fraco.TLabel").pack(side="left")
+
+    def mostrar(self, chave: str) -> None:
+        """Troca de página sem abrir janela nova e sem perder estado."""
+        if chave not in self.areas:
+            return
+        for nome, botao in self._botoes_nav.items():
+            botao.configure(style="NavAtivo.TButton" if nome == chave else "Nav.TButton")
+        montar = getattr(self, f"_montar_{chave}", None)
+        area = self.areas[chave]
+        if not getattr(area, "_montada", False) and callable(montar):
+            try:
+                montar(area)
+                area._montada = True  # type: ignore[attr-defined]
+            except Exception as erro:
+                log.exception("Falha ao montar %s", chave)
+                self.definir_status(f"Erro ao abrir a página: {erro}")
+        for nome, outra in self.areas.items():
+            if nome != chave:
+                outra.grid_remove()
+        area.grid()
+        self.pagina_atual = chave
+        atualizar = getattr(self, f"_atualizar_{chave}", None)
+        if callable(atualizar):
+            try:
+                atualizar()
+            except Exception as erro:
+                log.info("Atualização de %s falhou: %s", chave, erro)
+        self._atualizar_contador_cesta()
+
+    def definir_status(self, texto: str) -> None:
+        self.status_var.set(texto)
+
+    def notificar(self, titulo: str, mensagem: str, *, erro: bool = False) -> None:
+        """Mensagem clara: barra de status + caixa (sem poluir a tela)."""
+        self.definir_status(f"{titulo}: {mensagem}")
+        try:
+            (messagebox.showerror if erro else messagebox.showinfo)(titulo, mensagem)
+        except Exception:
+            pass
+
+    def _executar(self, trabalho: Callable[[], Any],
+                  concluir: Callable[[Any], None] | None = None,
+                  falhar: Callable[[Exception], None] | None = None) -> None:
+        """Roda em thread e devolve o resultado na thread da interface."""
+
+        def alvo() -> None:
+            try:
+                resultado = trabalho()
+            except Exception as erro:  # nunca deixa a interface travada
+                self._fila_eventos.put(("erro", erro, falhar or self._mostrar_erro))
+                return
+            self._fila_eventos.put(("ok", resultado, concluir))
+
+        threading.Thread(target=alvo, daemon=True).start()
+
+    def _mostrar_erro(self, erro: Exception) -> None:
+        texto = str(erro) or erro.__class__.__name__
+        self.definir_status(f"Erro: {texto[:160]}")
+        try:
+            messagebox.showerror("Central Musical", texto)
+        except Exception:
+            pass
+
+    def _processar_eventos(self) -> None:
+        try:
+            while True:
+                tipo, valor, callback = self._fila_eventos.get_nowait()
+                if tipo == "erro":
+                    if callable(callback):
+                        callback(valor)
+                elif tipo == "ok":
+                    if callable(callback):
+                        callback(valor)
+                elif tipo == "download":
+                    self._linha_de_download(valor)
+                elif tipo == "download_fim":
+                    self._baixou(valor)
+                elif tipo == "texto":
+                    self.definir_status(str(valor))
+        except queue.Empty:
+            pass
+        except Exception as erro:
+            log.info("Evento falhou: %s", erro)
+        finally:
+            self.raiz.after(150, self._processar_eventos)
+
+    def _sincronizar_inicial(self) -> None:
+        try:
+            resultado = self.central.sincronizar_biblioteca()
+            self._fila_eventos.put(("texto", (
+                f"Biblioteca: {resultado['encontrados']} arquivo(s) indexado(s)."), None))
+        except Exception as erro:
+            self._fila_eventos.put(("texto", f"Biblioteca não indexada: {erro}", None))
+
+    def _atualizar_contador_cesta(self) -> None:
+        try:
+            quantidade = self.central.selecao.quantidade()
+        except Exception:
+            quantidade = 0
+        texto = f"Cesta: {quantidade} música" + ("s" if quantidade != 1 else "")
+        try:
+            self.contador_cesta.configure(text=texto)
+        except Exception:
+            pass
+
+    # -- avisos de download -------------------------------------------------
+    def _linha_de_download(self, item: Any) -> None:
+        pagina = getattr(self, "arvore_downloads", None)
+        if pagina is None:
+            return
+        try:
+            valores = (item.titulo_exibicao[:70], item.formato.upper(),
+                       item.rotulo_estado, item.progresso_texto,
+                       item.mensagem[:60])
+            iid = str(item.id)
+            if pagina.exists(iid):  # type: ignore[attr-defined]
+                pagina.item(iid, values=valores)
+            else:
+                pagina.insert("", "end", iid=iid, values=valores)
+        except Exception:
+            pass
+
+    def _baixou(self, item: Any) -> None:
+        self._atualizar_contador_cesta()
+        if item.estado == "concluido":
+            self.definir_status(f"Concluído: {item.titulo_exibicao[:60]}")
+
+    # =====================================================================
+    # PÁGINA: PLAYLISTS
+    # =====================================================================
+    def _montar_playlists(self, area: Any) -> None:
+        ttk.Label(area, text="Playlists", style="Titulo.TLabel").pack(anchor="w")
+        ttk.Label(area, text=(
+            "Coleções suas (independentes das do YouTube). Crie, renomeie, "
+            "reordene e toque direto do aplicativo."),
+            style="Fraco.TLabel").pack(anchor="w", pady=(0, 8))
+
+        corpo = ttk.Frame(area)
+        corpo.pack(fill="both", expand=True)
+        esquerda = ttk.Frame(corpo)
+        esquerda.pack(side="left", fill="y", padx=(0, 8))
+        self.arvore_playlists = ttk.Treeview(
+            esquerda, columns=("nome", "total"), show="headings", height=14,
+            selectmode="browse")
+        for coluna, titulo, largura in (("nome", "Playlist", 220), ("total", "Músicas", 80)):
+            self.arvore_playlists.heading(coluna, text=titulo)
+            self.arvore_playlists.column(coluna, width=largura)
+        self.arvore_playlists.pack(fill="both", expand=True)
+        self.arvore_playlists.bind("<<TreeviewSelect>>", lambda _e: self._abrir_playlist_local())
+
+        botoes = ttk.Frame(esquerda)
+        botoes.pack(fill="x", pady=6)
+        ttk.Button(botoes, text="Nova", style="Principal.TButton",
+                   command=self._nova_playlist).pack(side="left")
+        ttk.Button(botoes, text="Renomear",
+                   command=self._renomear_playlist).pack(side="left", padx=4)
+        ttk.Button(botoes, text="Excluir",
+                   command=self._excluir_playlist).pack(side="left")
+
+        direita = ttk.Frame(corpo)
+        direita.pack(side="left", fill="both", expand=True)
+        self.titulo_playlist_local = tk.StringVar(value="Escolha uma playlist")
+        ttk.Label(direita, textvariable=self.titulo_playlist_local,
+                  style="Forte.TLabel").pack(anchor="w")
+        self.arvore_playlist_local = ttk.Treeview(
+            direita, columns=("titulo", "artista", "album", "duracao"),
+            show="headings", height=14, selectmode="extended")
+        for coluna, titulo, largura in (("titulo", "Título", 260),
+                                        ("artista", "Artista", 170),
+                                        ("album", "Álbum", 170),
+                                        ("duracao", "Duração", 80)):
+            self.arvore_playlist_local.heading(coluna, text=titulo)
+            self.arvore_playlist_local.column(coluna, width=largura)
+        self.arvore_playlist_local.pack(fill="both", expand=True, pady=4)
+        self.arvore_playlist_local.bind(
+            "<Double-1>", lambda _e: self._tocar_playlist_local())
+
+        acoes = ttk.Frame(direita)
+        acoes.pack(fill="x")
+        ttk.Button(acoes, text="▶ Tocar", style="Principal.TButton",
+                   command=self._tocar_playlist_local).pack(side="left")
+        ttk.Button(acoes, text="Remover da playlist",
+                   command=self._remover_da_playlist_local).pack(side="left", padx=6)
+        ttk.Button(acoes, text="Subir",
+                   command=lambda: self._mover_playlist_local(-1)).pack(side="left")
+        ttk.Button(acoes, text="Descer",
+                   command=lambda: self._mover_playlist_local(1)).pack(side="left", padx=4)
+        ttk.Button(acoes, text="Adicionar da biblioteca...",
+                   command=self._adicionar_da_biblioteca).pack(side="right")
+
+    def _nova_playlist(self) -> None:
+        nome = simpledialog.askstring("Nova playlist", "Nome da playlist:")
+        if not nome:
+            return
+        try:
+            self.central.criar_playlist(nome)
+        except Exception as erro:
+            self.notificar("Playlists", str(erro), erro=True)
+            return
+        self._atualizar_playlists()
+        self.definir_status(f"Playlist \"{nome}\" criada.")
+
+    def _renomear_playlist(self) -> None:
+        escolha = self.arvore_playlists.selection()
+        if not escolha:
+            return
+        playlist_id = int(str(escolha[0]))
+        atual = self.arvore_playlists.item(escolha[0], "values")[0]
+        novo = simpledialog.askstring("Renomear", "Novo nome:", initialvalue=atual)
+        if novo:
+            self.central.renomear_playlist(playlist_id, novo)
+            self._atualizar_playlists()
+
+    def _excluir_playlist(self) -> None:
+        escolha = self.arvore_playlists.selection()
+        if not escolha:
+            return
+        playlist_id = int(str(escolha[0]))
+        nome = self.arvore_playlists.item(escolha[0], "values")[0]
+        if not messagebox.askyesno(
+                "Excluir playlist",
+                f"Excluir a playlist \"{nome}\"?\n"
+                "As músicas continuam na biblioteca."):
+            return
+        self.central.excluir_playlist(playlist_id)
+        self.arvore_playlist_local.delete(*self.arvore_playlist_local.get_children())
+        self.titulo_playlist_local.set("Escolha uma playlist")
+        self._atualizar_playlists()
+
+    def _abrir_playlist_local(self) -> None:
+        escolha = self.arvore_playlists.selection()
+        if not escolha:
+            return
+        playlist_id = int(str(escolha[0]))
+        nome = self.arvore_playlists.item(escolha[0], "values")[0]
+        musicas = self.central.musicas_da_playlist(playlist_id)
+        self._musicas_fila = musicas
+        for item in self.arvore_playlist_local.get_children():
+            self.arvore_playlist_local.delete(item)
+        for musica in musicas:
+            self.arvore_playlist_local.insert("", "end", iid=str(musica.id), values=(
+                musica.titulo_exibicao, musica.artista or "—",
+                musica.album or "—", musica.duracao_formatada))
+        total = sum(m.duracao or 0 for m in musicas)
+        self.titulo_playlist_local.set(
+            f"{nome} — {len(musicas)} música(s), {int(total // 60)} min")
+
+    def _tocar_playlist_local(self) -> None:
+        escolha = self.arvore_playlists.selection()
+        if not escolha:
+            return
+        if not self.central.tocar_playlist(int(str(escolha[0]))):
+            self._avisar_sem_player()
+        else:
+            self._atualizar_player()
+            self.definir_status("Tocando a playlist.")
+
+    def _remover_da_playlist_local(self) -> None:
+        escolha_p = self.arvore_playlists.selection()
+        escolhas = self.arvore_playlist_local.selection()
+        if not escolha_p or not escolhas:
+            return
+        playlist_id = int(str(escolha_p[0]))
+        for iid in escolhas:
+            self.central.remover_da_playlist(playlist_id, int(str(iid)))
+        self._abrir_playlist_local()
+        self._atualizar_playlists()
+
+    def _mover_playlist_local(self, direcao: int) -> None:
+        escolha_p = self.arvore_playlists.selection()
+        escolha = self.arvore_playlist_local.selection()
+        if not escolha_p or not escolha:
+            return
+        playlist_id = int(str(escolha_p[0]))
+        ordem = [int(str(iid)) for iid in self.arvore_playlist_local.get_children()]
+        alvo = int(str(escolha[0]))
+        posicao = ordem.index(alvo)
+        nova = posicao + direcao
+        if not 0 <= nova < len(ordem):
+            return
+        ordem[posicao], ordem[nova] = ordem[nova], ordem[posicao]
+        self.central.reordenar_playlist(playlist_id, ordem)
+        self._abrir_playlist_local()
+        self.arvore_playlist_local.selection_set(str(alvo))
+
+    def _adicionar_da_biblioteca(self) -> None:
+        escolha = self.arvore_playlists.selection()
+        if not escolha:
+            messagebox.showinfo("Playlists", "Escolha (ou crie) uma playlist primeiro.")
+            return
+        playlist_id = int(str(escolha[0]))
+        janela = tk.Toplevel(self.raiz)
+        janela.title("Adicionar músicas da biblioteca")
+        janela.geometry("720x480")
+        janela.configure(background=self.cores["fundo"])
+        procurar = tk.StringVar()
+        campo = ttk.Entry(janela, textvariable=procurar)
+        campo.pack(fill="x", padx=10, pady=8)
+        arvore = ttk.Treeview(janela, columns=("titulo", "artista"),
+                              show="headings", selectmode="extended", height=14)
+        for coluna, titulo, largura in (("titulo", "Título", 380),
+                                        ("artista", "Artista", 240)):
+            arvore.heading(coluna, text=titulo)
+            arvore.column(coluna, width=largura)
+        arvore.pack(fill="both", expand=True, padx=10)
+        listadas: list[Any] = []
+
+        def preencher(*_a: Any) -> None:
+            listadas.clear()
+            for item in arvore.get_children():
+                arvore.delete(item)
+            for musica in self.central.musicas(texto=procurar.get().strip()):
+                listadas.append(musica)
+                arvore.insert("", "end", iid=str(musica.id), values=(
+                    musica.titulo_exibicao, musica.artista or "—"))
+
+        def confirmar() -> None:
+            ids = [int(str(iid)) for iid in arvore.selection()]
+            if ids:
+                quantidade = self.central.adicionar_a_playlist(playlist_id, ids)
+                self.definir_status(f"{quantidade} música(s) adicionada(s).")
+                self._abrir_playlist_local()
+                self._atualizar_playlists()
+            janela.destroy()
+
+        campo.bind("<KeyRelease>", preencher)
+        ttk.Button(janela, text="Adicionar selecionadas", style="Principal.TButton",
+                   command=confirmar).pack(pady=8)
+        preencher()
+
+    def _atualizar_playlists(self) -> None:
+        if not hasattr(self, "arvore_playlists"):
+            return
+        selecionada = self.arvore_playlists.selection()
+        for item in self.arvore_playlists.get_children():
+            self.arvore_playlists.delete(item)
+        for playlist in self.central.playlists():
+            self.arvore_playlists.insert("", "end", iid=str(playlist["id"]), values=(
+                playlist["nome"], playlist["total"]))
+        if selecionada:
+            try:
+                self.arvore_playlists.selection_set(selecionada[0])
+            except Exception:
+                pass
+
+    # =====================================================================
+    # PÁGINA: FILA DE DOWNLOADS
+    # =====================================================================
+    def _montar_fila(self, area: Any) -> None:
+        ttk.Label(area, text="Fila de downloads", style="Titulo.TLabel").pack(anchor="w")
+        self.fila_resumo_var = tk.StringVar(value="Nenhum download.")
+        ttk.Label(area, textvariable=self.fila_resumo_var,
+                  style="Fraco.TLabel").pack(anchor="w", pady=(0, 6))
+
+        controles = ttk.Frame(area)
+        controles.pack(fill="x", pady=4)
+        ttk.Button(controles, text="▶ Iniciar todos", style="Principal.TButton",
+                   command=self._iniciar_downloads).pack(side="left")
+        ttk.Button(controles, text="⏸ Pausar",
+                   command=self._pausar_downloads).pack(side="left", padx=4)
+        ttk.Button(controles, text="⏵ Retomar",
+                   command=self._retomar_downloads).pack(side="left")
+        ttk.Button(controles, text="✖ Cancelar item",
+                   command=self._cancelar_item).pack(side="left", padx=4)
+        ttk.Button(controles, text="Cancelar todos",
+                   command=self._cancelar_todos).pack(side="left")
+        ttk.Button(controles, text="Repetir falhas",
+                   command=self._repetir_falhas).pack(side="left", padx=4)
+        ttk.Button(controles, text="Remover concluídos",
+                   command=self._remover_concluidos).pack(side="left")
+
+        corpo = ttk.Frame(area)
+        corpo.pack(fill="both", expand=True, pady=6)
+        self.arvore_downloads = ttk.Treeview(
+            corpo, columns=("titulo", "formato", "estado", "progresso", "mensagem"),
+            show="headings", height=12, selectmode="browse")
+        for coluna, titulo, largura in (("titulo", "Música", 330),
+                                        ("formato", "Formato", 80),
+                                        ("estado", "Estado", 150),
+                                        ("progresso", "%", 70),
+                                        ("mensagem", "Mensagem", 300)):
+            self.arvore_downloads.heading(coluna, text=titulo)
+            self.arvore_downloads.column(coluna, width=largura)
+        barra = ttk.Scrollbar(corpo, orient="vertical",
+                              command=self.arvore_downloads.yview)
+        self.arvore_downloads.configure(yscrollcommand=barra.set)
+        self.arvore_downloads.pack(side="left", fill="both", expand=True)
+        barra.pack(side="right", fill="y")
+        self.arvore_downloads.bind("<Double-1>", lambda _e: self._detalhes_download())
+
+        rodape = ttk.Frame(area)
+        rodape.pack(fill="x")
+        ttk.Button(rodape, text="Ver detalhes / erro",
+                   command=self._detalhes_download).pack(side="left")
+        ttk.Button(rodape, text="Abrir pasta da música",
+                   command=self._abrir_pasta_do_item).pack(side="left", padx=6)
+        ttk.Button(rodape, text="Voltar à pesquisa",
+                   command=lambda: self.mostrar("pesquisar")).pack(side="right")
+
+        cesta = ttk.Labelframe(area, text="Cesta de seleção (o que você marcou)")
+        cesta.pack(fill="both", expand=False, pady=(8, 0))
+        self.cesta_var = tk.StringVar(value="Cesta vazia.")
+        ttk.Label(cesta, textvariable=self.cesta_var,
+                  style="Forte.TLabel").pack(anchor="w", padx=8, pady=4)
+        self.arvore_cesta = ttk.Treeview(
+            cesta, columns=("titulo", "origem", "duracao", "formato"),
+            show="headings", height=6, selectmode="extended")
+        for coluna, titulo, largura in (("titulo", "Música", 360),
+                                        ("origem", "Veio de", 220),
+                                        ("duracao", "Duração", 80),
+                                        ("formato", "Formato", 80)):
+            self.arvore_cesta.heading(coluna, text=titulo)
+            self.arvore_cesta.column(coluna, width=largura)
+        self.arvore_cesta.pack(fill="both", expand=True, padx=8)
+        acoes_cesta = ttk.Frame(cesta)
+        acoes_cesta.pack(fill="x", padx=8, pady=6)
+        ttk.Button(acoes_cesta, text="Baixar tudo da cesta", style="Principal.TButton",
+                   command=self._baixar_cesta).pack(side="left")
+        ttk.Button(acoes_cesta, text="Limpar cesta",
+                   command=self._limpar_cesta).pack(side="left", padx=6)
+        ttk.Button(acoes_cesta, text="Remover marcados",
+                   command=self._remover_da_cesta).pack(side="left")
+        ttk.Button(acoes_cesta, text="Subir",
+                   command=lambda: self._mover_cesta(-1)).pack(side="left", padx=(6, 0))
+        ttk.Button(acoes_cesta, text="Descer",
+                   command=lambda: self._mover_cesta(1)).pack(side="left", padx=4)
+
+    def _iniciar_downloads(self) -> None:
+        quantidade = self.central.iniciar_downloads()
+        self.definir_status(f"{quantidade} item(ns) na fila — baixando "
+                            f"{self.central.gerenciador.simultaneos} por vez.")
+
+    def _pausar_downloads(self) -> None:
+        self.central.pausar_downloads()
+        self.definir_status("Downloads pausados.")
+
+    def _retomar_downloads(self) -> None:
+        quantidade = self.central.retomar_downloads()
+        self.definir_status(f"{quantidade} item(ns) retomado(s).")
+
+    def _cancelar_item(self) -> None:
+        escolha = self.arvore_downloads.selection()
+        if not escolha:
+            messagebox.showinfo("Downloads", "Selecione um item da fila.")
+            return
+        if self.central.cancelar_download(int(str(escolha[0]))):
+            self.definir_status("Download cancelado.")
+
+    def _cancelar_todos(self) -> None:
+        if not messagebox.askyesno("Cancelar tudo", "Cancelar todos os downloads?"):
+            return
+        quantidade = self.central.cancelar_todos()
+        self.definir_status(f"{quantidade} download(s) cancelado(s).")
+
+    def _repetir_falhas(self) -> None:
+        quantidade = self.central.repetir_falhas()
+        self.definir_status(f"{quantidade} item(ns) tentando de novo.")
+
+    def _remover_concluidos(self) -> None:
+        quantidade = self.central.remover_finalizados()
+        self._atualizar_fila()
+        self.definir_status(f"{quantidade} item(ns) removido(s) da lista.")
+
+    def _detalhes_download(self) -> None:
+        escolha = self.arvore_downloads.selection()
+        if not escolha:
+            return
+        item = self.central.gerenciador.obter(int(str(escolha[0])))
+        if item is None:
+            return
+        detalhe = (
+            f"Música: {item.titulo_exibicao}\n"
+            f"Formato: {item.formato.upper()}\n"
+            f"Estado: {item.rotulo_estado}\n"
+            f"Progresso: {item.progresso_texto or '—'}\n"
+            f"Mensagem: {item.mensagem or '—'}\n"
+            f"Caminho: {item.caminho or '—'}\n"
+            f"URL: {item.url}\n"
+            f"Tempo: {item.duracao_processo or '—'} s"
+        )
+        if item.detalhe_erro:
+            detalhe += f"\n\nDetalhe do erro:\n{item.detalhe_erro}"
+        messagebox.showinfo("Detalhes do download", detalhe)
+
+    def _abrir_pasta_do_item(self) -> None:
+        escolha = self.arvore_downloads.selection()
+        if not escolha:
+            return
+        item = self.central.gerenciador.obter(int(str(escolha[0])))
+        if item and item.caminho and Path(item.caminho).exists():
+            self._abrir_no_sistema(str(Path(item.caminho).parent))
+        else:
+            self._abrir_no_sistema(str(self.central.config.musicas))
+
+    def _baixar_cesta(self) -> None:
+        quantidade = self.central.selecao_para_downloads()
+        if not quantidade:
+            messagebox.showinfo("Cesta", "A cesta está vazia.")
+            return
+        self._atualizar_fila()
+        self.central.iniciar_downloads()
+        self._atualizar_contador_cesta()
+        self.definir_status(f"{quantidade} música(s) da cesta começaram a baixar.")
+
+    def _limpar_cesta(self) -> None:
+        quantidade = self.central.limpar_selecao()
+        self._atualizar_fila()
+        self.definir_status(f"Cesta limpa ({quantidade} item(ns)).")
+
+    def _remover_da_cesta(self) -> None:
+        escolhas = self.arvore_cesta.selection()
+        if not escolhas:
+            return
+        itens = self.central.selecao.listar()
+        urls = [itens[int(str(iid))].url for iid in escolhas
+                if str(iid).isdigit() and int(str(iid)) < len(itens)]
+        removidos = self.central.remover_da_selecao(urls)
+        self._atualizar_fila()
+        self.definir_status(f"{removidos} item(ns) removido(s) da cesta.")
+
+    def _mover_cesta(self, direcao: int) -> None:
+        escolhas = self.arvore_cesta.selection()
+        if not escolhas:
+            return
+        indice = int(str(escolhas[0]))
+        self.central.reordenar_selecao(indice, indice + direcao)
+        self._atualizar_fila()
+        self.arvore_cesta.selection_set(str(max(0, indice + direcao)))
+
+    def _atualizar_fila(self) -> None:
+        if not hasattr(self, "arvore_downloads"):
+            return
+        for item in self.central.downloads():
+            iid = str(item.id)
+            valores = (item.titulo_exibicao[:70], item.formato.upper(),
+                       item.rotulo_estado, item.progresso_texto,
+                       (item.mensagem or "")[:70])
+            if self.arvore_downloads.exists(iid):
+                self.arvore_downloads.item(iid, values=valores)
+            else:
+                self.arvore_downloads.insert("", "end", iid=iid, values=valores)
+        resumo = self.central.resumo_downloads()
+        self.fila_resumo_var.set(
+            f"{resumo.get('total', 0)} item(ns) · {resumo.get('aguardando', 0)} "
+            f"aguardando · {resumo.get('processando', 0)} baixando · "
+            f"{resumo.get('concluido', 0)} concluído(s) · "
+            f"{resumo.get('falhou', 0)} falha(s) · "
+            f"{resumo.get('pausado', 0)} pausado(s)")
+        for item in self.arvore_cesta.get_children():
+            self.arvore_cesta.delete(item)
+        itens = self.central.selecao.listar()
+        for posicao, entrada in enumerate(itens):
+            self.arvore_cesta.insert("", "end", iid=str(posicao), values=(
+                entrada.titulo_exibicao, entrada.origem or "Pesquisa",
+                entrada.duracao_formatada, entrada.formato.upper()))
+        grupos = self.central.selecao.agrupado_por_origem()
+        resumo_cesta = ", ".join(f"{nome}: {qtd}" for nome, qtd in grupos.items())
+        self.cesta_var.set(
+            (f"Cesta: {len(itens)} música(s) · "
+             f"{self.central.selecao.duracao_formatada()}"
+             + (f" · {resumo_cesta}" if resumo_cesta else ""))
+            if itens else "Cesta vazia — pesquise e clique em \"Adicionar à cesta\".")
+        self._atualizar_contador_cesta()
+
+    # =====================================================================
+    # PÁGINA: BIBLIOTECA
+    # =====================================================================
+    def _montar_biblioteca(self, area: Any) -> None:
+        ttk.Label(area, text="Biblioteca", style="Titulo.TLabel").pack(anchor="w")
+        filtros = ttk.Frame(area)
+        filtros.pack(fill="x", pady=(4, 6))
+        self.biblioteca_busca_var = tk.StringVar()
+        campo = ttk.Entry(filtros, textvariable=self.biblioteca_busca_var)
+        campo.pack(side="left", fill="x", expand=True, padx=(0, 6), ipady=3)
+        campo.bind("<KeyRelease>", lambda _e: self._atualizar_biblioteca())
+        self.biblioteca_ordem_var = tk.StringVar(value="Título")
+        ttk.Combobox(filtros, textvariable=self.biblioteca_ordem_var, width=12,
+                     state="readonly",
+                     values=("Título", "Artista", "Álbum", "Ano", "Gênero",
+                             "Adicionada", "Duração")).pack(side="left", padx=(0, 6))
+        self.biblioteca_ordem_var.trace_add(
+            "write", lambda *_a: self._atualizar_biblioteca())
+        self.biblioteca_favoritos_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(filtros, text="Só favoritas",
+                        variable=self.biblioteca_favoritos_var,
+                        command=self._atualizar_biblioteca).pack(side="left", padx=(0, 6))
+        ttk.Button(filtros, text="Reindexar pasta",
+                   command=self._reindexar).pack(side="left")
+
+        corpo = ttk.Frame(area)
+        corpo.pack(fill="both", expand=True)
+        self.arvore_biblioteca = ttk.Treeview(
+            corpo, columns=("titulo", "artista", "album", "ano", "genero",
+                            "duracao", "capa"),
+            show="headings", selectmode="extended", height=14)
+        for coluna, titulo, largura in (("titulo", "Título", 280),
+                                        ("artista", "Artista", 170),
+                                        ("album", "Álbum", 170),
+                                        ("ano", "Ano", 60),
+                                        ("genero", "Gênero", 140),
+                                        ("duracao", "Duração", 70),
+                                        ("capa", "Capa", 60)):
+            self.arvore_biblioteca.heading(coluna, text=titulo)
+            self.arvore_biblioteca.column(coluna, width=largura)
+        barra = ttk.Scrollbar(corpo, orient="vertical",
+                              command=self.arvore_biblioteca.yview)
+        self.arvore_biblioteca.configure(yscrollcommand=barra.set)
+        self.arvore_biblioteca.pack(side="left", fill="both", expand=True)
+        barra.pack(side="right", fill="y")
+        self.arvore_biblioteca.bind("<Double-1>", lambda _e: self._tocar_selecionada())
+        self.arvore_biblioteca.bind("<<TreeviewSelect>>",
+                                    lambda _e: self._mostrar_capa_biblioteca())
+
+        acoes = ttk.Frame(area)
+        acoes.pack(fill="x", pady=6)
+        ttk.Button(acoes, text="▶ Tocar", style="Principal.TButton",
+                   command=self._tocar_selecionada).pack(side="left")
+        ttk.Button(acoes, text="★ Favoritar",
+                   command=self._favoritar_selecionada).pack(side="left", padx=4)
+        ttk.Button(acoes, text="Editar metadados",
+                   command=self._editar_metadados_selecionada).pack(side="left")
+        ttk.Button(acoes, text="Buscar capa",
+                   command=self._buscar_capa_selecionada).pack(side="left", padx=4)
+        ttk.Button(acoes, text="Adicionar à playlist",
+                   command=self._adicionar_selecionada_a_playlist).pack(side="left")
+        ttk.Button(acoes, text="Abrir pasta",
+                   command=self._abrir_pasta_selecionada).pack(side="left", padx=4)
+        ttk.Button(acoes, text="Excluir arquivo",
+                   command=self._excluir_selecionada).pack(side="left")
+        ttk.Button(acoes, text="Completar metadados (lote)",
+                   command=self._completar_metadados_lote).pack(side="right")
+
+        self.capa_biblioteca = tk.Label(
+            area, text="", background=self.cores["fundo"], height=8)
+        self.capa_biblioteca.pack(anchor="w", pady=(4, 0))
+
+    def _atualizar_biblioteca(self) -> None:
+        if not hasattr(self, "arvore_biblioteca"):
+            return
+        ordens = {"Título": "titulo", "Artista": "artista", "Álbum": "album",
+                  "Ano": "ano", "Gênero": "genero", "Adicionada": "adicionada",
+                  "Duração": "duracao"}
+        ordem = ordens.get(self.biblioteca_ordem_var.get(), "titulo")
+        musicas = self.central.musicas(
+            texto=self.biblioteca_busca_var.get().strip(), ordenar=ordem,
+            somente_favoritos=bool(self.biblioteca_favoritos_var.get()))
+        self._musicas_biblioteca = musicas
+        for item in self.arvore_biblioteca.get_children():
+            self.arvore_biblioteca.delete(item)
+        for musica in musicas:
+            self.arvore_biblioteca.insert("", "end", iid=str(musica.id), values=(
+                ("★ " if musica.favorito else "") + musica.titulo_exibicao,
+                musica.artista or "—", musica.album or "—", musica.ano or "—",
+                musica.genero or "—", musica.duracao_formatada,
+                "sim" if musica.tem_capa else "não"))
+        self.definir_status(f"{len(musicas)} música(s) na biblioteca.")
+
+    def _reindexar(self) -> None:
+        self.definir_status("Lendo as pastas e as tags dos arquivos...")
+
+        def concluir(resultado: dict[str, int]) -> None:
+            self._atualizar_biblioteca()
+            self.notificar("Biblioteca", (
+                f"{resultado['encontrados']} arquivo(s) encontrado(s): "
+                f"{resultado['novos']} novo(s), {resultado['atualizados']} "
+                f"atualizado(s), {resultado['removidos']} removido(s)."))
+
+        self._executar(lambda: self.central.sincronizar_biblioteca(
+            remover_ausentes=True), concluir)
+
+    def _musica_selecionada(self) -> Any:
+        escolha = self.arvore_biblioteca.selection()
+        if not escolha:
+            messagebox.showinfo("Biblioteca", "Selecione uma música.")
+            return None
+        return self.central.biblioteca.obter(int(str(escolha[0])))
+
+    def _tocar_selecionada(self) -> None:
+        musica = self._musica_selecionada()
+        if musica is None:
+            return
+        if self.central.tocar_fila(self._musicas_biblioteca or [musica]):
+            self._atualizar_player()
+            self.definir_status(f"Tocando: {musica.titulo_exibicao}")
+        else:
+            self._avisar_sem_player()
+
+    def _mostrar_capa_biblioteca(self) -> None:
+        escolha = self.arvore_biblioteca.selection()
+        if not escolha:
+            return
+        musica = self.central.biblioteca.obter(int(str(escolha[0])))
+        if musica is None:
+            return
+        imagem = _miniatura(capa_da_musica(musica.caminho), (150, 150))
+        if imagem is not None:
+            self.capa_biblioteca.image = imagem  # type: ignore[attr-defined]
+            self.capa_biblioteca.configure(image=imagem, text="")
+        else:
+            self.capa_biblioteca.image = None  # type: ignore[attr-defined]
+            self.capa_biblioteca.configure(
+                image="", text="Sem capa — use \"Buscar capa\"")
+
+    def _favoritar_selecionada(self) -> None:
+        musica = self._musica_selecionada()
+        if musica is None:
+            return
+        novo = self.central.favoritar_musica(musica.id)
+        self._atualizar_biblioteca()
+        self.definir_status("Adicionada aos favoritos." if novo else "Removida dos favoritos.")
+
+    def _abrir_pasta_selecionada(self) -> None:
+        musica = self._musica_selecionada()
+        if musica is not None:
+            self._abrir_no_sistema(str(Path(musica.caminho).parent))
+
+    def _excluir_selecionada(self) -> None:
+        musica = self._musica_selecionada()
+        if musica is None:
+            return
+        if not messagebox.askyesno(
+                "Excluir", f"Excluir \"{musica.titulo_exibicao}\" do disco?\n"
+                           "Essa ação não pode ser desfeita."):
+            return
+        if self.central.excluir_musica(musica.id, apagar_arquivo=True):
+            self._atualizar_biblioteca()
+            self.definir_status("Arquivo excluído.")
+
+    def _editar_metadados_selecionada(self) -> None:
+        musica = self._musica_selecionada()
+        if musica is None:
+            return
+        janela = tk.Toplevel(self.raiz)
+        janela.title(f"Metadados — {musica.titulo_exibicao}")
+        janela.configure(background=self.cores["fundo"])
+        janela.geometry("560x380")
+        campos = (
+            ("Título", "titulo"), ("Artista", "artista"), ("Álbum", "album"),
+            ("Ano", "ano"), ("Gênero", "genero"), ("Nº da faixa", "faixa"),
+        )
+        variaveis: dict[str, Any] = {}
+        for linha, (rotulo, chave) in enumerate(campos):
+            ttk.Label(janela, text=rotulo).grid(row=linha, column=0,
+                                                sticky="e", padx=8, pady=4)
+            variavel = tk.StringVar(value=str(getattr(musica, chave) or ""))
+            variaveis[chave] = variavel
+            ttk.Entry(janela, textvariable=variavel, width=44).grid(
+                row=linha, column=1, sticky="we", padx=8, pady=4)
+
+        def salvar() -> None:
+            dados = {chave: variavel.get().strip()
+                     for chave, variavel in variaveis.items()}
+            self.central.salvar_metadados(musica.id, **dados)
+            self._atualizar_biblioteca()
+            self.definir_status("Metadados gravados no arquivo MP3.")
+            janela.destroy()
+
+        ttk.Button(janela, text="Salvar no arquivo", style="Principal.TButton",
+                   command=salvar).grid(row=len(campos), column=1, sticky="e",
+                                        padx=8, pady=10)
+
+    def _buscar_capa_selecionada(self) -> None:
+        musica = self._musica_selecionada()
+        if musica is None:
+            return
+        self.definir_status("Procurando capa nas fontes públicas...")
+
+        def concluir(resultado: Any) -> None:
+            if getattr(resultado, "ok", False):
+                self._atualizar_biblioteca()
+                self._mostrar_capa_biblioteca()
+                self.notificar("Capa", resultado.mensagem)
+            else:
+                self.notificar("Capa", resultado.mensagem, erro=True)
+
+        self._executar(lambda: self.central.incorporar_capa(musica), concluir)
+
+    def _completar_metadados_lote(self) -> None:
+        escolhas = self.arvore_biblioteca.selection()
+        musicas = ([self.central.biblioteca.obter(int(str(i))) for i in escolhas]
+                   if escolhas else None)
+        musicas = [m for m in musicas if m] if musicas else None
+        self.definir_status("Identificando e gravando metadados...")
+
+        def concluir(resultados: list[Any]) -> None:
+            ok = sum(1 for r in resultados if getattr(r, "ok", False))
+            self._atualizar_biblioteca()
+            self.notificar(
+                "Metadados",
+                f"{ok} de {len(resultados)} arquivo(s) atualizados.\n"
+                "Campos que as fontes não confirmaram foram deixados como estavam.")
+
+        self._executar(lambda: self.central.completar_metadados(musicas), concluir)
+
+    def _adicionar_selecionada_a_playlist(self) -> None:
+        escolhas = self.arvore_biblioteca.selection()
+        if not escolhas:
+            messagebox.showinfo("Playlists", "Selecione as músicas.")
+            return
+        playlists = self.central.playlists()
+        if not playlists:
+            if messagebox.askyesno("Playlists",
+                                   "Você ainda não tem playlists. Criar uma agora?"):
+                self.mostrar("playlists")
+                self._nova_playlist()
+            return
+        janela = tk.Toplevel(self.raiz)
+        janela.title("Adicionar à playlist")
+        janela.configure(background=self.cores["fundo"])
+        janela.geometry("420x300")
+        lista = tk.Listbox(janela, height=10)
+        for playlist in playlists:
+            lista.insert("end", playlist["nome"])
+        lista.pack(fill="both", expand=True, padx=10, pady=10)
+
+        def confirmar() -> None:
+            selecao = lista.curselection()
+            if not selecao:
+                return
+            playlist_id = playlists[selecao[0]]["id"]
+            quantidade = self.central.adicionar_a_playlist(
+                playlist_id, [int(str(i)) for i in escolhas])
+            self.definir_status(f"{quantidade} música(s) adicionada(s) à playlist.")
+            janela.destroy()
+
+        ttk.Button(janela, text="Adicionar", style="Principal.TButton",
+                   command=confirmar).pack(pady=(0, 10))
+
+    # =====================================================================
+    # PÁGINA: INÍCIO (painel de controle)
+    # =====================================================================
+    def _montar_inicio(self, area: Any) -> None:
+        ttk.Label(area, text="Início", style="Titulo.TLabel").pack(anchor="w")
+        self.inicio_saudacao = tk.StringVar(value="")
+        ttk.Label(area, textvariable=self.inicio_saudacao,
+                  style="Fraco.TLabel").pack(anchor="w", pady=(0, 8))
+
+        busca = ttk.Frame(area)
+        busca.pack(fill="x", pady=(0, 10))
+        self.inicio_busca_var = tk.StringVar()
+        campo = ttk.Entry(busca, textvariable=self.inicio_busca_var)
+        campo.pack(side="left", fill="x", expand=True, padx=(0, 6), ipady=4)
+        campo.bind("<Return>", lambda _e: self._inicio_pesquisar())
+        ttk.Button(busca, text="Pesquisar", style="Principal.TButton",
+                   command=self._inicio_pesquisar).pack(side="left")
+
+        cartoes = ttk.Frame(area)
+        cartoes.pack(fill="x", pady=6)
+        self.cartoes: dict[str, Any] = {}
+        for chave, titulo in (("biblioteca", "Músicas na biblioteca"),
+                             ("concluidos", "Downloads concluídos"),
+                             ("andamento", "Em andamento"),
+                             ("cesta", "Na cesta de seleção"),
+                             ("playlists", "Playlists"),
+                             ("favoritos", "Favoritos")):
+            cartao = ttk.Frame(cartoes, style="Cartao.TFrame")
+            cartao.pack(side="left", fill="both", expand=True, padx=4)
+            ttk.Label(cartao, text=titulo, style="Cartao.TLabel").pack(
+                anchor="w", padx=12, pady=(10, 0))
+            valor = tk.StringVar(value="—")
+            ttk.Label(cartao, textvariable=valor,
+                      style="CartaoTitulo.TLabel").pack(anchor="w", padx=12,
+                                                        pady=(0, 10))
+            self.cartoes[chave] = valor
+
+        colunas = ttk.Frame(area)
+        colunas.pack(fill="both", expand=True, pady=(10, 0))
+        recentes = ttk.Labelframe(colunas, text="Últimas músicas adicionadas")
+        recentes.pack(side="left", fill="both", expand=True, padx=(0, 6))
+        self.arvore_recentes = ttk.Treeview(
+            recentes, columns=("titulo", "artista", "album"),
+            show="headings", height=8)
+        for coluna, titulo, largura in (("titulo", "Título", 220),
+                                        ("artista", "Artista", 150),
+                                        ("album", "Álbum", 150)):
+            self.arvore_recentes.heading(coluna, text=titulo)
+            self.arvore_recentes.column(coluna, width=largura)
+        self.arvore_recentes.pack(fill="both", expand=True, padx=6, pady=6)
+        self.arvore_recentes.bind("<Double-1>", lambda _e: self._inicio_tocar())
+
+        atalhos = ttk.Labelframe(colunas, text="Atalhos")
+        atalhos.pack(side="left", fill="both", padx=(6, 0))
+        for texto, destino in (("Pesquisar música ou playlist", "pesquisar"),
+                               ("Ver fila de downloads", "fila"),
+                               ("Abrir biblioteca", "biblioteca"),
+                               ("Criar/editar playlists", "playlists"),
+                               ("Ver histórico", "historico")):
+            ttk.Button(atalhos, text=texto,
+                       command=lambda d=destino: self.mostrar(d)).pack(
+                fill="x", padx=8, pady=3)
+
+        self.inicio_atividade = tk.StringVar(value="")
+        ttk.Label(area, textvariable=self.inicio_atividade,
+                  style="Fraco.TLabel", wraplength=900).pack(anchor="w", pady=(8, 0))
+
+    def _inicio_pesquisar(self) -> None:
+        texto = self.inicio_busca_var.get().strip()
+        if not texto:
+            return
+        try:
+            self.pesquisa_var.set(texto)
+        except Exception:
+            pass
+        self.mostrar("pesquisar")
+        self._pesquisar()
+
+    def _inicio_tocar(self) -> None:
+        escolha = self.arvore_recentes.selection()
+        if not escolha:
+            return
+        indice = self.arvore_recentes.index(escolha[0])
+        musicas = self.central.recentes(20)
+        if indice < len(musicas):
+            if self.central.tocar_fila(musicas, indice):
+                self._atualizar_player()
+            else:
+                self._avisar_sem_player()
+
+    def _avisar_sem_player(self) -> None:
+        if self.central.ffplay:
+            self.notificar("Reprodutor", "Não foi possível tocar este arquivo.", erro=True)
+        else:
+            self.notificar(
+                "Reprodutor",
+                "O áudio precisa do ffplay, que vem com o FFmpeg. Rode "
+                "configurar.bat (ou instale o FFmpeg) e reabra o programa.\n\n"
+                "Enquanto isso, use \"Abrir no player do Windows\".", erro=True)
+
+    def _atualizar_inicio(self) -> None:
+        try:
+            estatisticas = self.central.estatisticas()
+            resumo = self.central.resumo_downloads()
+        except Exception as erro:
+            self.definir_status(f"Não foi possível ler os dados: {erro}")
+            return
+        self.cartoes["biblioteca"].set(str(estatisticas["total"]))
+        self.cartoes["concluidos"].set(str(resumo.get("concluido", 0)))
+        self.cartoes["andamento"].set(str(resumo.get("ativos", 0)))
+        self.cartoes["cesta"].set(str(self.central.selecao.quantidade()))
+        self.cartoes["playlists"].set(str(estatisticas["playlists"]))
+        self.cartoes["favoritos"].set(str(estatisticas["favoritos"]))
+        horas = int(estatisticas["segundos"] // 3600)
+        minutos = int((estatisticas["segundos"] % 3600) // 60)
+        self.inicio_saudacao.set(
+            f"Sua biblioteca tem {estatisticas['total']} música(s) — "
+            f"{horas}h{minutos:02} de áudio · {estatisticas['com_capa']} com capa, "
+            f"{estatisticas['sem_capa']} sem capa.")
+        for item in self.arvore_recentes.get_children():
+            self.arvore_recentes.delete(item)
+        for musica in self.central.recentes(20):
+            self.arvore_recentes.insert("", "end", iid=str(musica.id), values=(
+                musica.titulo_exibicao, musica.artista or "—",
+                musica.album or "—"))
+        recentes = self.central.pesquisas_recentes(3)
+        if recentes:
+            self.inicio_atividade.set(
+                "Pesquisas recentes: " + " · ".join(p["consulta"] for p in recentes))
+        else:
+            self.inicio_atividade.set(
+                "Comece pesquisando um artista, uma música ou uma playlist.")
+        self._atualizar_contador_cesta()
+
+    # =====================================================================
+    # PÁGINA: PESQUISAR
+    # =====================================================================
+    def _montar_pesquisar(self, area: Any) -> None:
+        ttk.Label(area, text="Pesquisar", style="Titulo.TLabel").pack(anchor="w")
+        ttk.Label(area, text=(
+            "Digite o nome e aperte Enter. A pesquisa traz vídeos, playlists e "
+            "canais — tudo dentro do programa. Marque o que quiser (Ctrl+clique "
+            "ou Shift+clique) e adicione à cesta; pode pesquisar outros artistas "
+            "sem perder o que já marcou."),
+            style="Fraco.TLabel", wraplength=980).pack(anchor="w", pady=(0, 8))
+
+        linha = ttk.Frame(area)
+        linha.pack(fill="x")
+        self.pesquisa_var = tk.StringVar()
+        campo = ttk.Entry(linha, textvariable=self.pesquisa_var)
+        campo.pack(side="left", fill="x", expand=True, padx=(0, 6), ipady=4)
+        campo.bind("<Return>", lambda _e: self._pesquisar())
+        self.tipo_var = tk.StringVar(value="Tudo")
+        ttk.Combobox(linha, textvariable=self.tipo_var, width=13, state="readonly",
+                     values=("Tudo", "Só vídeos", "Só playlists")).pack(
+            side="left", padx=(0, 6))
+        ttk.Button(linha, text="Pesquisar", style="Principal.TButton",
+                   command=self._pesquisar).pack(side="left")
+
+        self.pesquisa_dica = tk.StringVar(value="")
+        ttk.Label(area, textvariable=self.pesquisa_dica,
+                  style="Fraco.TLabel").pack(anchor="w", pady=(6, 2))
+
+        corpo = ttk.Frame(area)
+        corpo.pack(fill="both", expand=True, pady=4)
+        self.arvore_resultados = ttk.Treeview(
+            corpo, columns=("titulo", "tipo", "canal", "duracao", "oficial"),
+            show="headings", selectmode="extended", height=12)
+        for coluna, titulo, largura in (("titulo", "Título", 400),
+                                        ("tipo", "Tipo", 140),
+                                        ("canal", "Canal", 180),
+                                        ("duracao", "Duração", 80),
+                                        ("oficial", "Verificado", 90)):
+            self.arvore_resultados.heading(coluna, text=titulo)
+            self.arvore_resultados.column(coluna, width=largura)
+        barra = ttk.Scrollbar(corpo, orient="vertical",
+                              command=self.arvore_resultados.yview)
+        self.arvore_resultados.configure(yscrollcommand=barra.set)
+        self.arvore_resultados.pack(side="left", fill="both", expand=True)
+        barra.pack(side="right", fill="y")
+        self.arvore_resultados.bind("<Double-1>", lambda _e: self._adicionar_selecionados())
+
+        acoes = ttk.Frame(area)
+        acoes.pack(fill="x", pady=6)
+        ttk.Button(acoes, text="Adicionar à cesta", style="Principal.TButton",
+                   command=self._adicionar_selecionados).pack(side="left")
+        ttk.Button(acoes, text="Adicionar todos",
+                   command=self._adicionar_todos).pack(side="left", padx=6)
+        ttk.Button(acoes, text="Abrir playlist",
+                   command=self._abrir_playlist_selecionada).pack(side="left")
+        ttk.Button(acoes, text="Prévia (ouvir trecho)",
+                   command=self._previa_selecionada).pack(side="left", padx=6)
+        ttk.Button(acoes, text="Baixar agora",
+                   command=self._baixar_selecionados_agora).pack(side="left")
+        ttk.Button(acoes, text="Ver cesta",
+                   command=lambda: self.mostrar("fila")).pack(side="right")
+
+        self._montar_area_playlist(area)
+        self.pesquisa_thumb = tk.Label(area, text="", anchor="w",
+                                       background=self.cores["fundo"])
+        self.pesquisa_thumb.pack(anchor="w")
+
+    def _montar_area_playlist(self, area: Any) -> None:
+        quadro = ttk.Labelframe(area, text="Itens da playlist aberta")
+        self.playlist_area = quadro
+        linha = ttk.Frame(quadro)
+        linha.pack(fill="x", padx=6, pady=4)
+        self.playlist_titulo_var = tk.StringVar(value="Nenhuma playlist aberta.")
+        ttk.Label(linha, textvariable=self.playlist_titulo_var,
+                  style="Forte.TLabel").pack(side="left")
+        ttk.Button(linha, text="Marcar tudo",
+                   command=lambda: self._marcar_playlist(True)).pack(side="right")
+        ttk.Button(linha, text="Desmarcar",
+                   command=lambda: self._marcar_playlist(False)).pack(side="right", padx=4)
+        ttk.Button(linha, text="Adicionar marcados",
+                   command=self._adicionar_da_playlist).pack(side="right", padx=4)
+        ttk.Button(linha, text="Sem ao vivo/show",
+                   command=self._filtrar_ao_vivo_playlist).pack(side="right", padx=4)
+        self.arvore_playlist = ttk.Treeview(
+            quadro, columns=("n", "titulo", "duracao", "situacao"),
+            show="headings", height=7, selectmode="extended")
+        for coluna, titulo, largura in (("n", "#", 40), ("titulo", "Título", 420),
+                                        ("duracao", "Duração", 90),
+                                        ("situacao", "Situação", 150)):
+            self.arvore_playlist.heading(coluna, text=titulo)
+            self.arvore_playlist.column(coluna, width=largura)
+        self.arvore_playlist.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        quadro.pack(fill="both", expand=False, pady=(6, 0))
+
+    def _pesquisar(self) -> None:
+        consulta = self.pesquisa_var.get().strip()
+        if not consulta:
+            messagebox.showwarning("Pesquisar", "Digite o que pesquisar.")
+            return
+        tipo = {"Tudo": "tudo", "Só vídeos": "videos",
+                "Só playlists": "playlists"}.get(self.tipo_var.get(), "tudo")
+        self.pesquisa_dica.set("Pesquisando no YouTube...")
+        self.definir_status(f"Pesquisando \"{consulta}\"...")
+
+        def concluir(resultados: list[Any]) -> None:
+            self._resultados = resultados
+            for item in self.arvore_resultados.get_children():
+                self.arvore_resultados.delete(item)
+            for posicao, resultado in enumerate(resultados):
+                self.arvore_resultados.insert("", "end", iid=str(posicao), values=(
+                    getattr(resultado, "titulo", ""),
+                    getattr(resultado, "tipo_legivel", "Vídeo"),
+                    getattr(resultado, "canal", ""),
+                    getattr(resultado, "duracao_formatada", ""),
+                    "sim" if getattr(resultado, "canal_verificado", False) else "não"))
+            playlists = sum(1 for r in resultados
+                            if getattr(r, "eh_playlist", False))
+            if not resultados:
+                self.pesquisa_dica.set(
+                    "Nada encontrado. Tente outras palavras ou o tipo \"Tudo\".")
+            else:
+                self.pesquisa_dica.set(
+                    f"{len(resultados)} resultado(s)"
+                    + (f" · {playlists} playlist(s) — use \"Abrir playlist\""
+                       if playlists else "")
+                    + " · marque com Ctrl+clique e adicione à cesta.")
+            self.definir_status(f"{len(resultados)} resultado(s) encontrado(s).")
+
+        self._executar(lambda: self.central.pesquisar(consulta, tipo), concluir)
+
+    def _indices_selecionados(self, arvore: Any) -> list[int]:
+        indices = []
+        for iid in arvore.selection():
+            try:
+                indices.append(int(str(iid)))
+            except ValueError:
+                try:
+                    indices.append(arvore.index(iid))
+                except Exception:
+                    continue
+        return indices
+
+    def _adicionar_selecionados(self) -> None:
+        indices = self._indices_selecionados(self.arvore_resultados)
+        if not indices:
+            messagebox.showinfo("Cesta", "Marque um ou mais resultados na lista.")
+            return
+        escolhidos = [self._resultados[i] for i in indices if i < len(self._resultados)]
+        adicionados, ignorados = self.central.adicionar_a_selecao(escolhidos)
+        origem = getattr(escolhidos[0], "canal", "") or "Pesquisa"
+        self.notificar(
+            "Adicionado à cesta",
+            f"{adicionados} música(s) adicionada(s) ({origem})."
+            + (f" {ignorados} já estavam na cesta." if ignorados else "")
+            + f"\nTotal na cesta: {self.central.selecao.quantidade()}.")
+        self._atualizar_contador_cesta()
+
+    def _adicionar_todos(self) -> None:
+        if not self._resultados:
+            return
+        adicionados, ignorados = self.central.adicionar_a_selecao(self._resultados)
+        self.notificar("Cesta", f"{adicionados} adicionada(s)"
+                                + (f", {ignorados} repetida(s)" if ignorados else "")
+                                + f". Total: {self.central.selecao.quantidade()}.")
+        self._atualizar_contador_cesta()
+
+    def _abrir_playlist_selecionada(self) -> None:
+        indices = self._indices_selecionados(self.arvore_resultados)
+        if not indices:
+            messagebox.showinfo("Playlist", "Marque uma playlist na lista.")
+            return
+        resultado = self._resultados[indices[0]]
+        if not getattr(resultado, "eh_playlist", False):
+            messagebox.showinfo(
+                "Playlist",
+                "Esse resultado é um vídeo/canal. Marque uma linha do tipo Playlist.")
+            return
+        self.playlist_titulo_var.set(f"Carregando {resultado.titulo}...")
+        self.definir_status("Listando os itens da playlist (nada foi baixado)...")
+
+        def concluir(playlist: Any) -> None:
+            self._playlist_aberta = playlist
+            for item in self.arvore_playlist.get_children():
+                self.arvore_playlist.delete(item)
+            for item in playlist.itens:
+                self.arvore_playlist.insert("", "end", iid=str(item.indice), values=(
+                    item.indice, item.titulo, item.duracao_formatada,
+                    "disponível" if item.disponivel else "privado/removido"))
+            minutos = int(playlist.duracao_total // 60)
+            self.playlist_titulo_var.set(
+                f"{playlist.titulo} — {playlist.quantidade} item(ns), ~{minutos} min")
+            self.definir_status(f"Playlist listada: {playlist.quantidade} item(ns).")
+
+        self._executar(lambda: self.central.listar_playlist(resultado.url), concluir)
+
+    def _marcar_playlist(self, marcar: bool) -> None:
+        itens = self.arvore_playlist.get_children()
+        if marcar:
+            self.arvore_playlist.selection_set(itens)
+        else:
+            self.arvore_playlist.selection_remove(itens)
+
+    def _filtrar_ao_vivo_playlist(self) -> None:
+        from previa import analisar
+
+        escolhidos = []
+        fora = 0
+        for iid in self.arvore_playlist.get_children():
+            valores = self.arvore_playlist.item(iid, "values")
+            titulo = str(valores[1]) if len(valores) > 1 else ""
+            situacao = str(valores[3]) if len(valores) > 3 else ""
+            if "privado" in situacao or "removido" in situacao:
+                fora += 1
+                continue
+            if analisar(titulo).possivel_ao_vivo:
+                fora += 1
+                continue
+            escolhidos.append(iid)
+        self.arvore_playlist.selection_set(escolhidos)
+        self.definir_status(
+            f"{len(escolhidos)} marcada(s); {fora} fora (ao vivo/show ou indisponível).")
+
+    def _adicionar_da_playlist(self) -> None:
+        playlist = self._playlist_aberta
+        if playlist is None:
+            return
+        indices = {int(str(iid)) for iid in self.arvore_playlist.selection()}
+        escolhidos = [item for item in playlist.itens
+                      if item.indice in indices and item.disponivel]
+        if not escolhidos:
+            messagebox.showinfo("Cesta", "Marque os itens da playlist que deseja.")
+            return
+        adicionados, ignorados = self.central.adicionar_a_selecao(
+            escolhidos, origem=f"Playlist: {playlist.titulo}")
+        self.notificar("Cesta",
+                       f"{adicionados} adicionada(s) de \"{playlist.titulo}\""
+                       + (f", {ignorados} repetida(s)" if ignorados else "")
+                       + f". Total: {self.central.selecao.quantidade()}.")
+        self._atualizar_contador_cesta()
+
+    def _previa_selecionada(self) -> None:
+        indices = self._indices_selecionados(self.arvore_resultados)
+        if not indices:
+            messagebox.showinfo("Prévia", "Marque um vídeo para ouvir um trecho.")
+            return
+        resultado = self._resultados[indices[0]]
+        self.definir_status("Preparando um trecho para ouvir (10–40 s)...")
+
+        def trabalho() -> Any:
+            previa = self.central.aplicacao.previa
+            pasta = previa.pasta_temporaria()
+            arquivo = previa.baixar_amostra(resultado.url, pasta)
+            from previa import pasta_para_tocar
+
+            return pasta_para_tocar(arquivo, pasta)
+
+        def concluir(caminho: Any) -> None:
+            if caminho:
+                self._abrir_no_sistema(str(caminho))
+                self.definir_status("Trecho aberto no player do Windows.")
+            else:
+                self.definir_status("Não foi possível preparar o trecho.")
+
+        self._executar(trabalho, concluir)
+
+    def _baixar_selecionados_agora(self) -> None:
+        indices = self._indices_selecionados(self.arvore_resultados)
+        if not indices:
+            messagebox.showinfo("Baixar", "Marque o que deseja baixar.")
+            return
+        escolhidos = [self._resultados[i] for i in indices if i < len(self._resultados)]
+        formato = self.central.preferencias.formato_padrao
+        for resultado in escolhidos:
+            if getattr(resultado, "eh_playlist", False):
+                continue
+            self.central.gerenciador.adicionar(
+                resultado.url, formato, titulo=getattr(resultado, "titulo", ""),
+                canal=getattr(resultado, "canal", ""),
+                duracao=getattr(resultado, "duracao", None),
+                thumbnail=getattr(resultado, "thumbnail", ""),
+                origem=getattr(resultado, "canal", "") or "Pesquisa")
+        self.mostrar("fila")
+        self.central.iniciar_downloads()
+        self.definir_status("Download iniciado — acompanhe na página da fila.")
+
+    def _abrir_no_sistema(self, caminho: str) -> None:
+        """Abre arquivo/pasta no programa padrão do sistema (Windows/Linux)."""
+        import os
+        import subprocess
+
+        try:
+            if sys.platform == "win32":
+                os.startfile(caminho)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", caminho])
+            else:
+                subprocess.Popen(["xdg-open", caminho])
+        except Exception as erro:
+            self.definir_status(f"Não foi possível abrir: {erro}")
+
+    # =====================================================================
+    # PÁGINAS: ARTISTAS e ÁLBUNS
+    # =====================================================================
+    def _montar_artistas(self, area: Any) -> None:
+        ttk.Label(area, text="Artistas", style="Titulo.TLabel").pack(anchor="w")
+        ttk.Label(area, text="Clique duas vezes para ver as músicas do artista.",
+                  style="Fraco.TLabel").pack(anchor="w", pady=(0, 6))
+        corpo = ttk.Frame(area)
+        corpo.pack(fill="both", expand=True)
+        self.arvore_artistas = ttk.Treeview(
+            corpo, columns=("nome", "total", "duracao"), show="headings",
+            height=16, selectmode="browse")
+        for coluna, titulo, largura in (("nome", "Artista", 380),
+                                        ("total", "Músicas", 100),
+                                        ("duracao", "Tempo", 120)):
+            self.arvore_artistas.heading(coluna, text=titulo)
+            self.arvore_artistas.column(coluna, width=largura)
+        self.arvore_artistas.pack(fill="both", expand=True)
+        self.arvore_artistas.bind("<Double-1>", lambda _e: self._abrir_artista())
+        acoes = ttk.Frame(area)
+        acoes.pack(fill="x", pady=6)
+        ttk.Button(acoes, text="Ver músicas", style="Principal.TButton",
+                   command=self._abrir_artista).pack(side="left")
+        ttk.Button(acoes, text="★ Favoritar artista",
+                   command=self._favoritar_artista).pack(side="left", padx=6)
+        ttk.Button(acoes, text="Tocar tudo",
+                   command=self._tocar_artista).pack(side="left")
+        self.artista_detalhe = tk.StringVar(value="")
+        ttk.Label(area, textvariable=self.artista_detalhe,
+                  style="Fraco.TLabel", wraplength=980).pack(anchor="w", pady=4)
+
+    def _atualizar_artistas(self) -> None:
+        if not hasattr(self, "arvore_artistas"):
+            return
+        for item in self.arvore_artistas.get_children():
+            self.arvore_artistas.delete(item)
+        for artista in self.central.artistas():
+            segundos = int(artista["duracao"] or 0)
+            nome = artista["nome"]
+            favorito = self.central.biblioteca.eh_favorito("artista", nome)
+            self.arvore_artistas.insert("", "end", iid=nome, values=(
+                ("★ " if favorito else "") + nome, artista["total"],
+                f"{segundos // 60} min"))
+
+    def _artista_escolhido(self) -> str:
+        escolha = self.arvore_artistas.selection()
+        if not escolha:
+            return ""
+        return str(escolha[0])
+
+    def _abrir_artista(self) -> None:
+        nome = self._artista_escolhido()
+        if not nome:
+            return
+        musicas = self.central.musicas(artista=nome, ordenar="album")
+        self.artista_detalhe.set(
+            f"{nome}: " + ", ".join(
+                f"{m.album or 'sem álbum'} — {m.titulo_exibicao}" for m in musicas[:20]))
+        self._musicas_fila = musicas
+        self.definir_status(f"{len(musicas)} música(s) de {nome}.")
+
+    def _tocar_artista(self) -> None:
+        nome = self._artista_escolhido()
+        if not nome:
+            return
+        musicas = self.central.musicas(artista=nome, ordenar="album")
+        if self.central.tocar_fila(musicas):
+            self._atualizar_player()
+        else:
+            self._avisar_sem_player()
+
+    def _favoritar_artista(self) -> None:
+        nome = self._artista_escolhido()
+        if not nome:
+            return
+        ativo = self.central.favoritar("artista", nome)
+        self._atualizar_artistas()
+        self.definir_status(
+            f"{nome} {'adicionado aos' if ativo else 'removido dos'} favoritos.")
+
+    def _montar_albuns(self, area: Any) -> None:
+        ttk.Label(area, text="Álbuns", style="Titulo.TLabel").pack(anchor="w")
+        corpo = ttk.Frame(area)
+        corpo.pack(fill="both", expand=True, pady=6)
+        self.arvore_albuns = ttk.Treeview(
+            corpo, columns=("album", "artista", "ano", "total"),
+            show="headings", height=16, selectmode="browse")
+        for coluna, titulo, largura in (("album", "Álbum", 340),
+                                        ("artista", "Artista", 240),
+                                        ("ano", "Ano", 70), ("total", "Músicas", 90)):
+            self.arvore_albuns.heading(coluna, text=titulo)
+            self.arvore_albuns.column(coluna, width=largura)
+        self.arvore_albuns.pack(fill="both", expand=True)
+        self.arvore_albuns.bind("<Double-1>", lambda _e: self._tocar_album())
+        acoes = ttk.Frame(area)
+        acoes.pack(fill="x")
+        ttk.Button(acoes, text="Tocar álbum", style="Principal.TButton",
+                   command=self._tocar_album).pack(side="left")
+        ttk.Button(acoes, text="★ Favoritar álbum",
+                   command=self._favoritar_album).pack(side="left", padx=6)
+        self.album_detalhe = tk.StringVar(value="")
+        ttk.Label(area, textvariable=self.album_detalhe,
+                  style="Fraco.TLabel").pack(anchor="w", pady=4)
+
+    def _atualizar_albuns(self) -> None:
+        if not hasattr(self, "arvore_albuns"):
+            return
+        for item in self.arvore_albuns.get_children():
+            self.arvore_albuns.delete(item)
+        for posicao, album in enumerate(self.central.albuns()):
+            self.arvore_albuns.insert("", "end", iid=str(posicao), values=(
+                album["album"], album["artista"] or "—", album["ano"] or "—",
+                album["total"]))
+
+    def _album_escolhido(self) -> Any:
+        escolha = self.arvore_albuns.selection()
+        if not escolha:
+            return None
+        albuns = self.central.albuns()
+        indice = int(str(escolha[0]))
+        return albuns[indice] if indice < len(albuns) else None
+
+    def _tocar_album(self) -> None:
+        album = self._album_escolhido()
+        if album is None:
+            return
+        musicas = self.central.biblioteca.listar(album=album["album"],
+                                                 ordenar="album")
+        if self.central.tocar_fila(musicas):
+            self._atualizar_player()
+            self.album_detalhe.set(
+                f"{album['album']}: " + ", ".join(m.titulo_exibicao for m in musicas))
+        else:
+            self._avisar_sem_player()
+
+    def _favoritar_album(self) -> None:
+        album = self._album_escolhido()
+        if album is None:
+            return
+        ativo = self.central.favoritar("album", album["album"])
+        self.definir_status(
+            f"Álbum {album['album']} {'favoritado' if ativo else 'removido dos favoritos'}.")
+
+    # =====================================================================
+    # PÁGINA: HISTÓRICO
+    # =====================================================================
+    def _montar_historico(self, area: Any) -> None:
+        ttk.Label(area, text="Histórico", style="Titulo.TLabel").pack(anchor="w")
+        ttk.Label(area, text="Downloads, falhas, músicas adicionadas e pesquisas.",
+                  style="Fraco.TLabel").pack(anchor="w", pady=(0, 6))
+        corpo = ttk.Frame(area)
+        corpo.pack(fill="both", expand=True)
+        self.arvore_historico = ttk.Treeview(
+            corpo, columns=("quando", "status", "formato", "url", "mensagem"),
+            show="headings", height=14, selectmode="extended")
+        for coluna, titulo, largura in (("quando", "Quando", 150),
+                                        ("status", "Status", 120),
+                                        ("formato", "Formato", 80),
+                                        ("url", "Música/URL", 320),
+                                        ("mensagem", "Mensagem", 300)):
+            self.arvore_historico.heading(coluna, text=titulo)
+            self.arvore_historico.column(coluna, width=largura)
+        self.arvore_historico.pack(fill="both", expand=True)
+        acoes = ttk.Frame(area)
+        acoes.pack(fill="x", pady=6)
+        ttk.Button(acoes, text="Atualizar",
+                   command=self._atualizar_historico).pack(side="left")
+        ttk.Button(acoes, text="Baixar de novo",
+                   command=self._rebaixar_do_historico).pack(side="left", padx=6)
+        ttk.Button(acoes, text="Abrir arquivo",
+                   command=self._abrir_do_historico).pack(side="left")
+        ttk.Button(acoes, text="Limpar pesquisas",
+                   command=self._limpar_pesquisas).pack(side="right")
+        self.pesquisas_var = tk.StringVar(value="")
+        ttk.Label(area, textvariable=self.pesquisas_var,
+                  style="Fraco.TLabel", wraplength=980).pack(anchor="w")
+
+    def _atualizar_historico(self) -> None:
+        if not hasattr(self, "arvore_historico"):
+            return
+        for item in self.arvore_historico.get_children():
+            self.arvore_historico.delete(item)
+        registros = self.central.aplicacao.historico.listar(200, incluir_erros=True)
+        registros.sort(key=lambda r: str(r.get("data_hora") or ""), reverse=True)
+        self._historico_atual = registros
+        for posicao, registro in enumerate(registros):
+            quando = str(registro.get("data_hora") or "")[:16].replace("T", " ")
+            self.arvore_historico.insert("", "end", iid=str(posicao), values=(
+                quando, str(registro.get("status") or ""),
+                str(registro.get("formato") or "").upper(),
+                str(registro.get("caminho") or registro.get("url") or "")[:80],
+                str(registro.get("mensagem") or "")[:80]))
+        pesquisas = self.central.pesquisas_recentes(10)
+        self.pesquisas_var.set(
+            "Pesquisas recentes: " + " · ".join(p["consulta"] for p in pesquisas)
+            if pesquisas else "Nenhuma pesquisa registrada ainda.")
+
+    def _rebaixar_do_historico(self) -> None:
+        registros = getattr(self, "_historico_atual", [])
+        escolhas = self.arvore_historico.selection()
+        urls = []
+        for iid in escolhas:
+            indice = int(str(iid))
+            if 0 <= indice < len(registros):
+                url = str(registros[indice].get("url") or "")
+                if url.startswith("http") and url not in urls:
+                    urls.append(url)
+        if not urls:
+            messagebox.showinfo("Histórico", "As linhas marcadas não têm URL.")
+            return
+        formato = self.central.preferencias.formato_padrao
+        self.central.gerenciador.adicionar_varios([(u, formato) for u in urls])
+        self.mostrar("fila")
+        self.central.iniciar_downloads()
+
+    def _abrir_do_historico(self) -> None:
+        registros = getattr(self, "_historico_atual", [])
+        escolhas = self.arvore_historico.selection()
+        if not escolhas:
+            return
+        indice = int(str(escolhas[0]))
+        if 0 <= indice < len(registros):
+            caminho = str(registros[indice].get("caminho") or "")
+            if caminho and Path(caminho).exists():
+                self._abrir_no_sistema(caminho)
+            else:
+                messagebox.showinfo("Histórico", "O arquivo não está mais no disco.")
+
+    def _limpar_pesquisas(self) -> None:
+        self.central.biblioteca.limpar_pesquisas()
+        self._atualizar_historico()
+
+    # =====================================================================
+    # PÁGINA: FAVORITOS
+    # =====================================================================
+    def _montar_favoritos(self, area: Any) -> None:
+        ttk.Label(area, text="Favoritos", style="Titulo.TLabel").pack(anchor="w")
+        ttk.Label(area, text="Músicas, artistas, álbuns e playlists que você marcou.",
+                  style="Fraco.TLabel").pack(anchor="w", pady=(0, 6))
+        corpo = ttk.Frame(area)
+        corpo.pack(fill="both", expand=True)
+        self.arvore_favoritos = ttk.Treeview(
+            corpo, columns=("titulo", "artista", "album", "duracao"),
+            show="headings", height=16, selectmode="extended")
+        for coluna, titulo, largura in (("titulo", "Música", 320),
+                                        ("artista", "Artista", 200),
+                                        ("album", "Álbum", 200),
+                                        ("duracao", "Duração", 80)):
+            self.arvore_favoritos.heading(coluna, text=titulo)
+            self.arvore_favoritos.column(coluna, width=largura)
+        self.arvore_favoritos.pack(fill="both", expand=True)
+        self.arvore_favoritos.bind("<Double-1>", lambda _e: self._tocar_favoritas())
+        acoes = ttk.Frame(area)
+        acoes.pack(fill="x", pady=6)
+        ttk.Button(acoes, text="▶ Tocar favoritas", style="Principal.TButton",
+                   command=self._tocar_favoritas).pack(side="left")
+        ttk.Button(acoes, text="Remover dos favoritos",
+                   command=self._remover_favorita).pack(side="left", padx=6)
+        self.favoritos_outros = tk.StringVar(value="")
+        ttk.Label(area, textvariable=self.favoritos_outros,
+                  style="Fraco.TLabel", wraplength=980).pack(anchor="w")
+
+    def _atualizar_favoritos(self) -> None:
+        if not hasattr(self, "arvore_favoritos"):
+            return
+        for item in self.arvore_favoritos.get_children():
+            self.arvore_favoritos.delete(item)
+        musicas = self.central.musicas_favoritas()
+        self._musicas_favoritas = musicas
+        for musica in musicas:
+            self.arvore_favoritos.insert("", "end", iid=str(musica.id), values=(
+                musica.titulo_exibicao, musica.artista or "—",
+                musica.album or "—", musica.duracao_formatada))
+        artistas = [f["chave"] for f in self.central.favoritos("artista")]
+        albuns = [f["chave"] for f in self.central.favoritos("album")]
+        self.favoritos_outros.set(
+            ("Artistas favoritos: " + ", ".join(artistas) if artistas else "")
+            + ("\n" if artistas and albuns else "")
+            + ("Álbuns favoritos: " + ", ".join(albuns) if albuns else ""))
+
+    def _tocar_favoritas(self) -> None:
+        musicas = getattr(self, "_musicas_favoritas", [])
+        if not musicas:
+            return
+        if self.central.tocar_fila(musicas):
+            self._atualizar_player()
+        else:
+            self._avisar_sem_player()
+
+    def _remover_favorita(self) -> None:
+        for iid in self.arvore_favoritos.selection():
+            self.central.favoritar_musica(int(str(iid)))
+        self._atualizar_favoritos()
+
+    # =====================================================================
+    # PÁGINA: CONFIGURAÇÕES
+    # =====================================================================
+    def _montar_config(self, area: Any) -> None:
+        ttk.Label(area, text="Configurações", style="Titulo.TLabel").pack(anchor="w")
+        rolagem = ttk.Frame(area)
+        rolagem.pack(fill="both", expand=True)
+        canvas = tk.Canvas(rolagem, highlightthickness=0,
+                           background=self.cores["fundo"])
+        barra = ttk.Scrollbar(rolagem, orient="vertical", command=canvas.yview)
+        quadro = ttk.Frame(canvas)
+        quadro.bind("<Configure>",
+                    lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=quadro, anchor="nw")
+        canvas.configure(yscrollcommand=barra.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        barra.pack(side="right", fill="y")
+        prefs = self.central.preferencias
+
+        aparencia = ttk.Labelframe(quadro, text="APARÊNCIA")
+        aparencia.pack(fill="x", padx=8, pady=6)
+        ttk.Label(aparencia, text="Tema:").grid(row=0, column=0, sticky="e", padx=6)
+        self.config_tema = tk.StringVar(value=getattr(prefs, "tema", "escuro"))
+        ttk.Combobox(aparencia, textvariable=self.config_tema, width=12,
+                     state="readonly", values=("escuro", "claro")).grid(
+            row=0, column=1, sticky="w", pady=3)
+        ttk.Label(aparencia, text="Tamanho do texto:").grid(row=1, column=0,
+                                                            sticky="e", padx=6)
+        self.config_fonte = tk.StringVar(value=getattr(prefs, "tamanho_fonte", "normal"))
+        ttk.Combobox(aparencia, textvariable=self.config_fonte, width=12,
+                     state="readonly",
+                     values=("pequeno", "normal", "grande")).grid(
+            row=1, column=1, sticky="w", pady=3)
+
+        downloads = ttk.Labelframe(quadro, text="DOWNLOADS")
+        downloads.pack(fill="x", padx=8, pady=6)
+        ttk.Label(downloads, text="Pasta das músicas:").grid(
+            row=0, column=0, sticky="e", padx=6)
+        self.config_mp3 = tk.StringVar(value=getattr(prefs, "diretorio_mp3", ""))
+        ttk.Entry(downloads, textvariable=self.config_mp3, width=52).grid(
+            row=0, column=1, sticky="we", pady=3)
+        ttk.Button(downloads, text="Escolher...",
+                   command=lambda: self._escolher_pasta(self.config_mp3)).grid(
+            row=0, column=2, padx=4)
+        ttk.Label(downloads, text="Qualidade MP3 (0=máx ou 192K):").grid(
+            row=1, column=0, sticky="e", padx=6)
+        self.config_qualidade = tk.StringVar(value=str(prefs.qualidade_mp3))
+        ttk.Entry(downloads, textvariable=self.config_qualidade, width=14).grid(
+            row=1, column=1, sticky="w", pady=3)
+        ttk.Label(downloads, text="Downloads ao mesmo tempo (1–4):").grid(
+            row=2, column=0, sticky="e", padx=6)
+        self.config_simultaneos = tk.IntVar(value=int(prefs.downloads_simultaneos))
+        ttk.Spinbox(downloads, from_=1, to=4, textvariable=self.config_simultaneos,
+                    width=6).grid(row=2, column=1, sticky="w", pady=3)
+        ttk.Label(downloads, text="Se o arquivo já existir:").grid(
+            row=3, column=0, sticky="e", padx=6)
+        self.config_sobrescrita = tk.StringVar(value=str(prefs.sobrescrita))
+        ttk.Combobox(downloads, textvariable=self.config_sobrescrita, width=14,
+                     state="readonly",
+                     values=("perguntar", "pular", "renomear", "sobrescrever")).grid(
+            row=3, column=1, sticky="w", pady=3)
+        self.config_organizar = tk.BooleanVar(value=bool(prefs.organizar_nomes))
+        ttk.Checkbutton(downloads, text="Salvar como \"Artista - Título.mp3\"",
+                        variable=self.config_organizar).grid(
+            row=4, column=0, columnspan=3, sticky="w", padx=6, pady=2)
+        self.config_album = tk.BooleanVar(value=bool(prefs.organizar_por_album))
+        ttk.Checkbutton(downloads, text="Guardar em subpastas Artista/Álbum",
+                        variable=self.config_album).grid(
+            row=5, column=0, columnspan=3, sticky="w", padx=6, pady=2)
+
+        metadados = ttk.Labelframe(quadro, text="METADADOS E CAPAS")
+        metadados.pack(fill="x", padx=8, pady=6)
+        self.config_metadados = tk.BooleanVar(value=bool(prefs.metadados_ativos))
+        ttk.Checkbutton(metadados,
+                        text="Identificar metadados automaticamente (APIs + IA)",
+                        variable=self.config_metadados).pack(anchor="w", padx=6, pady=2)
+        self.config_capas = tk.BooleanVar(value=bool(prefs.buscar_capas))
+        ttk.Checkbutton(metadados, text="Buscar e incorporar capas oficiais",
+                        variable=self.config_capas).pack(anchor="w", padx=6, pady=2)
+
+        audio = ttk.Labelframe(quadro, text="CONVERSÃO E QUALIDADE DO ÁUDIO")
+        audio.pack(fill="x", padx=8, pady=6)
+        self.config_normalizar = tk.BooleanVar(
+            value=bool(getattr(prefs, "normalizar_volume", False)))
+        ttk.Checkbutton(audio,
+                        text="Normalizar volume ao terminar (EBU R128, -16 LUFS)",
+                        variable=self.config_normalizar).pack(anchor="w", padx=6, pady=2)
+        self.config_verificar = tk.BooleanVar(
+            value=bool(getattr(prefs, "verificar_audio", True)))
+        ttk.Checkbutton(audio,
+                        text="Verificar o MP3 antes de marcar como concluído",
+                        variable=self.config_verificar).pack(anchor="w", padx=6, pady=2)
+
+        ia = ttk.Labelframe(quadro, text="INTELIGÊNCIA ARTIFICIAL (opcional)")
+        ia.pack(fill="x", padx=8, pady=6)
+        self.config_chave_status = tk.StringVar(value="")
+        ttk.Label(ia, textvariable=self.config_chave_status,
+                  wraplength=760).grid(row=0, column=0, columnspan=3,
+                                       sticky="w", padx=6, pady=3)
+        ttk.Button(ia, text="Importar chave (api.txt)",
+                   command=self._importar_chave).grid(row=1, column=0, padx=6, pady=3)
+        ttk.Button(ia, text="Testar chave",
+                   command=self._testar_chave).grid(row=1, column=1, padx=6)
+        ttk.Button(ia, text="Remover",
+                   command=self._remover_chave).grid(row=1, column=2, padx=6)
+
+        servicos = ttk.Labelframe(quadro, text="YOUTUBE E COOKIES")
+        servicos.pack(fill="x", padx=8, pady=6)
+        self.config_cookies_status = tk.StringVar(value="")
+        ttk.Label(servicos, textvariable=self.config_cookies_status,
+                  wraplength=760).grid(row=0, column=0, columnspan=3,
+                                       sticky="w", padx=6, pady=3)
+        ttk.Button(servicos, text="Importar cookies.txt",
+                   command=self._importar_cookies).grid(row=1, column=0, padx=6, pady=3)
+        ttk.Button(servicos, text="Remover cookies",
+                   command=self._remover_cookies).grid(row=1, column=1, padx=6)
+
+        sistema = ttk.Labelframe(quadro, text="SISTEMA E MANUTENÇÃO")
+        sistema.pack(fill="x", padx=8, pady=6)
+        self.config_versao = tk.StringVar(value="")
+        ttk.Label(sistema, textvariable=self.config_versao,
+                  wraplength=760).grid(row=0, column=0, columnspan=3,
+                                       sticky="w", padx=6, pady=3)
+        ttk.Button(sistema, text="Atualizar o yt-dlp",
+                   command=self._atualizar_ytdlp).grid(row=1, column=0, padx=6, pady=3)
+        ttk.Button(sistema, text="Limpar arquivos temporários",
+                   command=self._limpar_temporarios).grid(row=1, column=1, padx=6)
+        ttk.Button(sistema, text="Testar dependências",
+                   command=self._testar_dependencias).grid(row=1, column=2, padx=6)
+        self.config_sincronizar = tk.BooleanVar(
+            value=bool(getattr(prefs, "sincronizar_ao_abrir", True)))
+        ttk.Checkbutton(sistema, text="Indexar a pasta de músicas ao abrir",
+                        variable=self.config_sincronizar).grid(
+            row=2, column=0, columnspan=3, sticky="w", padx=6, pady=2)
+
+        ttk.Button(quadro, text="Salvar configurações", style="Principal.TButton",
+                   command=self._salvar_config).pack(anchor="w", padx=8, pady=10)
+        self._atualizar_config()
+
+    def _escolher_pasta(self, variavel: Any) -> None:
+        escolhida = filedialog.askdirectory()
+        if escolhida:
+            variavel.set(escolhida)
+
+    def _atualizar_config(self) -> None:
+        try:
+            status = self.central.status_chave()
+            texto = ("Chave de IA configurada (" + str(getattr(status, "mascara", ""))
+                     + ")") if getattr(status, "configurada", False) else (
+                "Nenhuma chave de IA (opcional — o programa funciona sem ela).")
+            self.config_chave_status.set(texto)
+        except Exception as erro:
+            self.config_chave_status.set(f"Chave de IA: {erro}")
+        try:
+            cookies = self.central.status_cookies()
+            self.config_cookies_status.set(
+                "cookies.txt carregado ("
+                f"{getattr(cookies, 'do_youtube', 0)} cookie(s) do YouTube)."
+                if getattr(cookies, "configurado", False) else
+                "Nenhum cookies.txt (downloads públicos funcionam sem ele).")
+        except Exception as erro:
+            self.config_cookies_status.set(f"Cookies: {erro}")
+        try:
+            versao = self.central.versao_ytdlp() or "não identificada"
+        except Exception:
+            versao = "não identificada"
+        audio = ("ffplay disponível" if self.central.ffplay else
+                 "ffplay ausente — o áudio tocará no player do Windows")
+        self.config_versao.set(
+            f"yt-dlp: {versao} · áudio: {audio} · "
+            f"biblioteca: {self.central.biblioteca.caminho}")
+
+    def _salvar_config(self) -> None:
+        try:
+            self.central.aplicar_preferencias(replace(self.central.preferencias,
+                tema=self.config_tema.get(), tamanho_fonte=self.config_fonte.get(),
+                diretorio_mp3=self.config_mp3.get().strip(),
+                qualidade_mp3=self.config_qualidade.get().strip(),
+                downloads_simultaneos=int(self.config_simultaneos.get()),
+                sobrescrita=self.config_sobrescrita.get(),
+                organizar_nomes=bool(self.config_organizar.get()),
+                organizar_por_album=bool(self.config_album.get()),
+                metadados_ativos=bool(self.config_metadados.get()),
+                buscar_capas=bool(self.config_capas.get()),
+                normalizar_volume=bool(self.config_normalizar.get()),
+                verificar_audio=bool(self.config_verificar.get()),
+                sincronizar_ao_abrir=bool(self.config_sincronizar.get())))
+        except Exception as erro:
+            self.notificar("Configurações", str(erro), erro=True)
+            return
+        self.cores = tema.aplicar(
+            self.raiz, nome=self.config_tema.get(), tamanho=self.config_fonte.get())
+        self.notificar("Configurações", "Salvo. As mudanças já valem nesta sessão.")
+
+    def _importar_chave(self) -> None:
+        caminho = filedialog.askopenfilename(
+            title="Arquivo com a chave da IA",
+            filetypes=(("Texto", "*.txt"), ("Todos", "*.*")))
+        if not caminho:
+            return
+        try:
+            info = self.central.importar_chave(caminho)
+        except Exception as erro:
+            self.notificar("Chave de IA", str(erro), erro=True)
+            return
+        self._atualizar_config()
+        self.notificar("Chave de IA", getattr(info, "mensagem", "Chave importada."))
+
+    def _testar_chave(self) -> None:
+        self.definir_status("Testando a chave...")
+
+        def concluir(resultado: tuple[bool, str]) -> None:
+            self.notificar("Chave de IA", resultado[1], erro=not resultado[0])
+
+        self._executar(self.central.testar_chave, concluir)
+
+    def _remover_chave(self) -> None:
+        self.central.remover_chave()
+        self._atualizar_config()
+        self.definir_status("Chave de IA removida.")
+
+    def _importar_cookies(self) -> None:
+        caminho = filedialog.askopenfilename(
+            title="cookies.txt", filetypes=(("Texto", "*.txt"), ("Todos", "*.*")))
+        if not caminho:
+            return
+        try:
+            info = self.central.importar_cookies(caminho)
+        except Exception as erro:
+            self.notificar("Cookies", str(erro), erro=True)
+            return
+        self._atualizar_config()
+        self.notificar("Cookies", getattr(info, "mensagem", "cookies.txt importado."))
+
+    def _remover_cookies(self) -> None:
+        self.central.remover_cookies()
+        self._atualizar_config()
+        self.definir_status("Cookies removidos.")
+
+    def _atualizar_ytdlp(self) -> None:
+        self.definir_status("Atualizando o yt-dlp (pode levar um minuto)...")
+
+        def concluir(resultado: Any) -> None:
+            self._atualizar_config()
+            self.notificar("yt-dlp", getattr(resultado, "mensagem", "Pronto."),
+                           erro=not getattr(resultado, "ok", False))
+
+        self._executar(self.central.atualizar_ytdlp, concluir)
+
+    def _limpar_temporarios(self) -> None:
+        import shutil
+
+        removidos = 0
+        for pasta in (self.central.config.dados / "previa",
+                      self.central.config.dados / ".cache-capas"):
+            if pasta.is_dir():
+                shutil.rmtree(pasta, ignore_errors=True)
+                removidos += 1
+        for pasta in self.central.config.dados.glob("baixador-*"):
+            if pasta.is_dir():
+                shutil.rmtree(pasta, ignore_errors=True)
+                removidos += 1
+        self.notificar("Temporários", f"{removidos} pasta(s) temporária(s) limpa(s).")
+
+    def _testar_dependencias(self) -> None:
+        try:
+            resultado = self.central.config.verificar_dependencias()
+            texto = "\n".join(f"{nome}: {caminho}" for nome, caminho in resultado.items())
+        except Exception as erro:
+            texto = f"Faltando: {erro}"
+        self.notificar("Dependências", texto, erro="Faltando" in texto)
+
+    # -- player (rodapé, sempre visível) -----------------------------------
+    def _montar_player(self) -> None:
+        cores = self.cores
+        quadro = ttk.Frame(self.rodape, style="Cartao.TFrame")
+        quadro.pack(fill="x", pady=(4, 0))
+        self.capa_player = tk.Label(quadro, text="♪", width=6, height=3,
+                                    background=cores["cartao"], foreground=cores["texto_fraco"])
+        self.capa_player.pack(side="left", padx=8, pady=6)
+        info = ttk.Frame(quadro, style="Cartao.TFrame")
+        info.pack(side="left", fill="x", expand=True)
+        self.player_titulo = tk.StringVar(value="Nada tocando")
+        self.player_sub = tk.StringVar(value="Escolha uma música na Biblioteca")
+        ttk.Label(info, textvariable=self.player_titulo,
+                  style="CartaoTitulo.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Label(info, textvariable=self.player_sub,
+                  style="Cartao.TLabel").pack(anchor="w")
+        self.player_progresso = ttk.Progressbar(info, mode="determinate", maximum=100)
+        self.player_progresso.pack(fill="x", pady=(4, 6), padx=(0, 8))
+
+        controles = ttk.Frame(quadro, style="Cartao.TFrame")
+        controles.pack(side="left", padx=6)
+        for texto, acao in (("⏮", self._player_anterior), ("▶", self._player_tocar),
+                            ("⏸", self._player_pausar), ("⏭", self._player_proxima)):
+            ttk.Button(controles, text=texto, width=3,
+                       command=acao).pack(side="left", padx=1)
+        self.player_modo = tk.StringVar(value="Repetir: desligado")
+        ttk.Button(controles, text="🔀", width=3,
+                   command=self._player_aleatorio).pack(side="left", padx=1)
+        botao_rep = ttk.Button(controles, text="🔁", width=3,
+                               command=self._player_repeticao)
+        botao_rep.pack(side="left", padx=1)
+        ttk.Label(quadro, textvariable=self.player_modo,
+                  style="Cartao.TLabel").pack(side="left", padx=6)
+        ttk.Label(quadro, text="Volume", style="Cartao.TLabel").pack(side="left")
+        self.volume_var = tk.IntVar(value=self.central.reprodutor.volume)
+        escala = ttk.Scale(quadro, from_=0, to=100, orient="horizontal",
+                          variable=self.volume_var, length=110,
+                          command=lambda _v: self._player_volume())
+        escala.pack(side="left", padx=(4, 10))
+
+    def _player_tocar(self) -> None:
+        if not self.central.reprodutor.tocar():
+            motivo = ("O arquivo não existe mais."
+                      if self.central.reprodutor.fila else
+                      "Escolha uma música na Biblioteca (duplo clique).")
+            if not self.central.ffplay:
+                motivo = ("O player precisa do ffplay (vem com o FFmpeg). Rode "
+                          "configurar.bat ou toque a música no player do Windows.")
+            self.notificar("Reprodutor", motivo, erro=True)
+            return
+        self.definir_status("Tocando...")
+        self._atualizar_player()
+
+    def _player_pausar(self) -> None:
+        if self.central.reprodutor.pausado:
+            self.central.reprodutor.tocar()
+            self.definir_status("Continuando...")
+        else:
+            self.central.reprodutor.pausar()
+            self.definir_status("Pausado.")
+        self._atualizar_player()
+
+    def _player_proxima(self) -> None:
+        if not self.central.reprodutor.proxima():
+            self.definir_status("Fim da fila.")
+        self._atualizar_player()
+
+    def _player_anterior(self) -> None:
+        self.central.reprodutor.anterior()
+        self._atualizar_player()
+
+    def _player_aleatorio(self) -> None:
+        ativo = self.central.reprodutor.alternar_aleatorio()
+        self.definir_status(f"Aleatório {'ligado' if ativo else 'desligado'}.")
+
+    def _player_repeticao(self) -> None:
+        modo = self.central.reprodutor.ciclo_repeticao()
+        self.player_modo.set(self.central.reprodutor.descricao_repeticao())
+        self.definir_status(f"Modo de repetição: {modo}.")
+
+    def _player_volume(self) -> None:
+        try:
+            self.central.reprodutor.mudar_volume(int(self.volume_var.get()))
+        except Exception:
+            pass
+
+    def _atualizar_player(self) -> None:
+        estado = self.central.estado_reprodutor()
+        self.player_titulo.set(estado.get("faixa") or "Nada tocando")
+        subtitulo = estado.get("subtitulo") or ""
+        if estado.get("pausado"):
+            subtitulo = (subtitulo + " · pausado").strip(" ·")
+        self.player_sub.set(subtitulo or "Escolha uma música na Biblioteca")
+        caminho = estado.get("caminho")
+        if caminho and estado.get("capa"):
+            imagem = _miniatura(capa_da_musica(caminho), (56, 56))
+            if imagem is not None:
+                self.capa_player.image = imagem  # type: ignore[attr-defined]
+                self.capa_player.configure(image=imagem, text="")
+                return
+        self.capa_player.image = None  # type: ignore[attr-defined]
+        self.capa_player.configure(image="", text="♪")
+
+    def _verificar_fim_da_musica(self) -> None:
+        """Avança sozinho quando a faixa termina (sem travar a interface)."""
+        try:
+            rodando = self.central.reprodutor
+            if rodando.tocando and not rodando.esta_rodando():
+                rodando.proxima(automatico=True)
+                self._atualizar_player()
+            elif rodando.tocando:
+                faixa = rodando.atual
+                total = (faixa.duracao if faixa and faixa.duracao else 0) or 0
+                if total:
+                    self.player_progresso.configure(
+                        value=min(100, rodando.posicao / total * 100))
+        except Exception:
+            pass
+        finally:
+            self.raiz.after(1000, self._verificar_fim_da_musica)
+
+
+__all__ = ["CentralApp", "PAGINAS", "capa_da_musica"]
+
+
+def iniciar(configuracoes: Any = None) -> None:
+    """Abre a Central Musical (ponto de entrada: ``python central_app.py``)."""
+    if tk is None:
+        raise SystemExit("Tkinter não está disponível neste Python.")
+    from datetime import datetime
+    from logging.handlers import RotatingFileHandler
+
+    from central import Central as _Central
+
+    central = _Central(configuracoes)
+    try:
+        pasta = central.config.dados
+        pasta.mkdir(parents=True, exist_ok=True)
+        manipulador = RotatingFileHandler(
+            pasta / "central.log", maxBytes=1_000_000, backupCount=2,
+            encoding="utf-8")
+        manipulador.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logging.getLogger("baixador").addHandler(manipulador)
+        logging.getLogger("baixador").setLevel(logging.INFO)
+        log.info("Central Musical aberta em %s", datetime.now().isoformat())
+    except Exception:
+        pass
+    app = CentralApp(central)
+    try:
+        app.raiz.mainloop()
+    finally:
+        app.central.reprodutor.parar(silencioso=True)
+
+
+if __name__ == "__main__":
+    iniciar()

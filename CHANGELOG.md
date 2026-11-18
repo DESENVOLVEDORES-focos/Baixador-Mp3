@@ -1,5 +1,73 @@
 # Changelog
 
+## 2026-11-17 — Central Musical: uma janela para tudo (versão 6.0)
+
+Pedido do usuário: *"central completa de gerenciamento e download de músicas
+MP3"* — barra lateral fixa, biblioteca, playlists, fila com estados, player
+integrado, histórico, favoritos, configurações. A regra de aceitação foi dura:
+**nada de botão decorativo, página vazia, dado fictício ou funcionalidade
+simulada**.
+
+### Novo
+
+- **`central_app.py`** — a Central Musical (Tkinter): barra lateral fixa com 10
+  páginas, tema escuro/claro, cards, miniaturas de capa e **player permanente no
+  rodapé** (capa, título, progresso, ⏮ ▶ ⏸ ⏭, aleatório, repetição, volume).
+- **`central.py`** — a fachada que a tela usa, sem Tkinter dentro: pesquisa,
+  cesta, fila, biblioteca, playlists, favoritos, reprodutor e configurações.
+  Tudo testável sem tela.
+- **`biblioteca.py`** — banco SQLite (`biblioteca.db`) montado das tags reais:
+  busca tolerante a acento (`legiao` acha `Legião`), filtros, ordenações,
+  duplicatas, playlists locais com ordem, favoritos de música/artista/álbum,
+  pesquisas recentes.
+- **`selecao.py`** — a **cesta acumulativa** entre buscas e páginas, salva em
+  `selecao.json` (sobrevive a fechar o programa). Duplicata não entra; mesma
+  música em outro formato entra.
+- **`gerenciador.py`** — fila concorrente (1–4) com estados reais
+  *aguardando / processando / convertendo / metadados / concluído / pausado /
+  falhou / cancelado*, pausar, retomar, cancelar um ou todos, repetir falhas.
+- **`reprodutor.py`** — player usando o `ffplay` que já vem com o FFmpeg do
+  programa (**nenhuma dependência nova**): fila, pausa com posição preservada,
+  próxima/anterior, aleatório e três modos de repetição.
+- **`colecoes.py`** — identificação musical e capas em lote, uma por arquivo,
+  com relato do que foi confirmado e do que não foi.
+- **`audio.py`** — verificação do MP3 final e **normalização de volume** (EBU
+  R128) com o FFmpeg já instalado.
+- **`tema.py`**, **`central_servicos.py`** — tema/fontes e serviços comuns
+  (cookies, chave de IA, versão e atualização do yt-dlp).
+- **`main.py`** — porta de entrada nova: abre a Central; `--classica` mantém a
+  interface antiga por abas. `iniciar.bat` passou a chamar `main.py`.
+
+### Mudado
+
+- `gerenciador` confirma o caminho do arquivo **no disco** antes de indexar:
+  se o downloader publicar num nome diferente, a música ainda entra na
+  biblioteca (e o arquivo é procurado pelo `mtime` do início do item).
+- O botão **Iniciar downloads** passou a levar a cesta para a fila antes de
+  começar (antes era preciso fazer isso em dois passos).
+- Itens vindos de playlist aberta herdam o nome da playlist como origem na
+  cesta, agrupando o que veio junto da mesma pesquisa.
+- `preferencias.py`/`configuracoes.py` ganharam `normalizar_volume` e
+  `verificar_audio` (com padrão seguro: desligado e ligado).
+
+### Corrigido
+
+- **Vazamento de ambiente entre testes**: abrir a `Central` publica
+  `BAIXADOR_SEM_CAPA`/`BAIXADOR_METADATA_MODULE`; sem restaurar, os testes de
+  capa da IA 2 passavam a falhar em silêncio. Agora há teste específico.
+- Expressão morta (`if False`) no toque de álbum e variável inútil no Início.
+
+### Testes
+
+- **340 testes** (+82) e 61 subtests; `pyflakes` limpo, `compileall` ok.
+- Novos: `tests/test_biblioteca.py` (SQLite com MP3 e ID3 reais),
+  `tests/test_selecao_e_reprodutor.py` (cesta e player),
+  `tests/test_gerenciador.py` (estados, concorrência, pausa, cancelamento),
+  `tests/test_central.py` (fluxo seleção → download → biblioteca → playlist →
+  favoritos, com arquivos reais), `tests/test_central_app.py` (as 10 páginas
+  montadas com Tk simulado, incluindo **nenhum botão sem comando**),
+  `tests/test_main.py` (linha de comando e atalhos `.bat`).
+
 ## 2026-11-17 — A pesquisa é dentro do programa: vídeos **e** playlists
 
 Pedido do usuário: *"o yt-dlp tem que pesquisar vídeos e playlist e mostrar lá,

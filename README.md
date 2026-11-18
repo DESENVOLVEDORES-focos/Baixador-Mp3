@@ -15,12 +15,49 @@ pesquisa, fila, histórico e enriquecimento automático de metadados e capa.
 2. Dê **dois cliques em `configurar.bat`** (uma única vez, com internet).
    Ele instala as dependências e baixa `yt-dlp.exe` e `ffmpeg.exe` para
    `ferramentas\`.
-3. Dê **dois cliques em `iniciar.bat`**.
+3. Dê **dois cliques em `iniciar.bat`** — abre a **Central Musical**.
+
+> A interface antiga (por abas) continua disponível em
+> `iniciar_interface.bat` ou `python main.py --classica`. Nada foi removido.
 
 Se o FFmpeg não puder ser baixado automaticamente, o instalador avisa: baixe
 em <https://ffmpeg.org/download.html> e coloque `ffmpeg.exe` em `ferramentas\`.
 
-## Como usar
+## Central Musical (tela principal)
+
+Uma janela só, com barra lateral fixa à esquerda e o **player sempre no rodapé**:
+
+| Página | O que faz |
+| --- | --- |
+| **Início** | Totais da biblioteca, downloads em andamento, últimos adicionados, atalhos |
+| **Pesquisar** | Busca dentro do programa (vídeos + playlists + canais), abrir playlist, prévia, cesta |
+| **Playlists** | Playlists locais: criar, renomear, excluir, reordenar, adicionar da biblioteca, tocar |
+| **Fila de downloads** | Estados em tempo ao vivo, pausar/retomar/cancelar, repetir falhas, cesta reordenável |
+| **Biblioteca** | Lista e grade com capas, filtros por artista/álbum/gênero, favoritar, editar tags, excluir, duplicatas |
+| **Artistas / Álbuns** | Navegação por artista e álbum, com contagem, duração e atalho para tocar |
+| **Histórico** | Tudo o que foi baixado, com status, motivo honesto e rebaixar |
+| **Favoritos** | Músicas, artistas e álbuns favoritos (salvos no banco) |
+| **Configurações** | Tema, fonte, pasta, qualidade, concorrência, identidade visual, cookies, chave de IA, yt-dlp, FFmpeg, normalização e diagnóstico |
+
+O que vale saber:
+
+- **A cesta é acumulativa**: marque músicas numa pesquisa, troque de página,
+  pesquise outra coisa e marque mais — os itens ficam. A cesta mostra origem,
+  duração total e sobrevive a fechar e abrir o programa. Dá para reordenar,
+  remover e limpar antes de baixar.
+- **Cada download passa por estados visíveis**: *aguardando → processando →
+  convertendo → metadados → concluído* (ou *pausado*, *falhou* com o motivo).
+  Você pode baixar de 1 a 4 ao mesmo tempo.
+- **Nada é dado como concluído sem conferência**: o MP3 final é aberto pelo
+  FFmpeg e, se você ligar a opção, o volume é normalizado (EBU R128, −16 LUFS).
+- **A biblioteca é um banco local** (`<dados>\biblioteca.db`) montado a partir
+  das tags dos arquivos: fechar e abrir mantém tudo, e a pasta pode ser
+  reindexada a qualquer momento sem duplicar.
+- **Sem invenção**: quando as fontes públicas e a IA não confirmam um campo, ele
+  fica vazio e a tela diz o que não foi confirmado. Capa duvidosa não é
+  incorporada.
+
+## Como usar (fluxo rápido)
 
 1. **Pesquisar**: digite o nome no campo de pesquisa e aperte **Enter** (ou
    *Pesquisar*). A pesquisa é feita **dentro do programa** e traz **vídeos e
