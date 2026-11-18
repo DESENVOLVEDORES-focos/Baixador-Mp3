@@ -27,7 +27,8 @@ em <https://ffmpeg.org/download.html> e coloque `ffmpeg.exe` em `ferramentas\`.
 2. **Formato**: escolha MP3 (música com capa e metadados) ou MP4 (vídeo).
 3. **Baixar**: o painel *Downloads* mostra **% , velocidade, tamanho e a etapa
    atual** (Baixando → Convertendo → Gravando metadados).
-4. Ao terminar, o MP3 fica em `Musicas\` com título, artista, álbum, ano,
+4. Ao terminar, o MP3 fica em `Musicas\` (ou `Musicas\Artista\Álbum\`, se você
+   ligar essa opção) com título, artista, álbum, ano,
    gênero e **capa incorporada** — quando as APIs públicas conseguem
    confirmar a música. Sem confirmação, o arquivo mantém apenas o que o
    próprio vídeo informa e a interface **diz isso explicitamente**.
@@ -46,6 +47,12 @@ em <https://ffmpeg.org/download.html> e coloque `ffmpeg.exe` em `ferramentas\`.
   terceiros, nunca aparece em logs e está no `.gitignore`.
 - **Downloads**: pastas de MP3/MP4, formato e qualidade padrão, número de
   resultados, política de sobrescrita, metadados/capas ligados ou desligados.
+- **Nome dos arquivos**: por padrão salva como `Artista - Título.mp3`, sem
+  caracteres proibidos no Windows nem marcadores de publicação
+  (`Official Video`, `HD`, `Lyrics`). Tags de versão (`Remix`, `Ao Vivo`,
+  `Remastered 2011`) são mantidas, porque mudam a faixa. Opcionalmente guarda
+  em subpastas `Artista\Álbum`, **somente** quando a identificação confirma o
+  álbum — sem confirmação, o arquivo fica na pasta principal.
 
 ## Linha de comando (opcional, mesmas funções)
 

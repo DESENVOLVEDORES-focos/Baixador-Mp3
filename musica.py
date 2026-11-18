@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from configuracoes import CONFIG, Configuracoes
@@ -13,6 +15,7 @@ from downloader import Downloader, ErroDownload, Progresso
 from fila import FilaDownloads
 from historico import Historico
 from integracao import AdaptadorMetadados
+from organizacao import caminho_disponivel, subpasta
 from pesquisa import ErroPesquisa, Pesquisador
 
 
@@ -39,9 +42,14 @@ class Aplicacao:
         self.fila = FilaDownloads(configuracoes)
         self.historico = Historico(configuracoes)
         self.metadados = AdaptadorMetadados()
+        # Última classificação de erro (a interface usa para a dica contextual)
+        # e último arquivo publicado (para exibir/abrir a pasta).
+        self.ultimo_diagnostico = None
+        self.ultimo_caminho: str = ""
 
     def baixar(self, url: str, formato: str, ao_progresso: Any = None,
-               politica: str | None = None) -> tuple[bool, str]:
+               politica: str | None = None,
+               contexto: Any = None) -> tuple[bool, str]:
         """Baixa e (em MP3) enriquece; nunca deixa falha virar traceback.
 
         Retorna ``(sucesso, mensagem)``. Arquivo já existente com a política
@@ -50,7 +58,8 @@ class Aplicacao:
         try:
             try:
                 resultado = self.downloader.baixar(  # type: ignore[arg-type]
-                    url, formato, ao_progresso=ao_progresso, politica=politica)
+                    url, formato, ao_progresso=ao_progresso, politica=politica,
+                    contexto=contexto)
             except TypeError:
                 # Downloader injetado (testes/fakes) sem suporte a progresso.
                 resultado = self.downloader.baixar(url, formato)  # type: ignore[arg-type]
@@ -70,16 +79,21 @@ class Aplicacao:
             if formato == "mp3" and self.metadados.disponivel:
                 try:
                     # Contrato v2 (retrocompatível): além dos campos originais,
-                    # o título/canal ajudam a IA 2 a identificar sem depender só
-                    # do nome do arquivo.
-                    caminho = self.metadados.processar_mp3(caminho, {
+                    # título/canal/duração/thumbnail do resultado escolhido
+                    # tornam a identificação precisa sem depender do nome do
+                    # arquivo (que o yt-dlp trunca em 180 bytes).
+                    dados = {
                         "url": resultado.url,
                         "formato": resultado.formato,
                         "titulo": resultado.caminho.stem,
                         "caminho": str(resultado.caminho),
                         "inicio": resultado.iniciado_em,
                         "conclusao": resultado.finalizado_em,
-                    })
+                    }
+                    from contexto import ContextoMidia
+
+                    dados.update(ContextoMidia.normalizar(contexto).como_metadados())
+                    caminho = self.metadados.processar_mp3(caminho, dados)
                 except Exception as erro_integracao:
                     aviso = f"Download concluído, mas a integração de metadados falhou: {erro_integracao}"
                     self.historico.registrar(
@@ -87,25 +101,62 @@ class Aplicacao:
                         caminho=resultado.caminho, mensagem=aviso,
                         inicio=resultado.iniciado_em,
                     )
+            caminho = self._organizar_em_subpasta(caminho, formato)
             self.historico.registrar(
                 url=url, formato=formato,
                 status="sucesso_com_aviso" if aviso else "sucesso",
                 caminho=caminho, mensagem=aviso, inicio=resultado.iniciado_em,
             )
+            self.ultimo_caminho = str(caminho)
             print(f"[OK] {formato.upper()} concluído: {caminho}")
             if aviso:
                 print(f"[AVISO] {aviso}", file=sys.stderr)
             return True, aviso
         except (ErroDownload, FileNotFoundError, ValueError, OSError) as erro:
+            from diagnostico import classificar, sanitizar
+
             mensagem = str(erro)
             saida = getattr(erro, "saida", "")
             if saida:
                 mensagem += "\n" + saida
+            # A causa é traduzida em orientação (login, cookies vencidos, rede…)
+            # e a mensagem técnica vai sanitizada para o histórico.
+            diagnostico = classificar(mensagem)
             self.historico.registrar(
-                url=url, formato=formato, status="erro", mensagem=mensagem,
+                url=url, formato=formato, status="erro",
+                mensagem=f"[{diagnostico.situacao}] {diagnostico.texto} | "
+                         f"técnico: {sanitizar(str(erro))}",
             )
-            print(f"[ERRO] {mensagem}", file=sys.stderr)
-            return False, mensagem
+            print(f"[ERRO] {diagnostico.texto}", file=sys.stderr)
+            self.ultimo_diagnostico = diagnostico
+            return False, diagnostico.texto
+
+    def _organizar_em_subpasta(self, caminho: Any, formato: str) -> Any:
+        """Move para ``Artista/Álbum`` usando só dados confirmados pela IA 2.
+
+        Acontece *depois* do enriquecimento (é quando o álbum é conhecido) e
+        nunca falha o download: qualquer erro devolve o caminho original.
+        """
+        if formato != "mp3" or not getattr(self.config, "organizar_por_album", False):
+            return caminho
+        try:
+            processador = getattr(self.metadados, "_processador", None)
+            resumo = getattr(processador, "ultimo_resumo", None) or {}
+            relativa = subpasta(resumo)
+            if relativa is None:
+                return caminho
+            destino = self.config.musicas / relativa
+            if Path(caminho).parent == destino:
+                return caminho
+            destino.mkdir(parents=True, exist_ok=True)
+            final = caminho_disponivel(destino, Path(caminho).name)
+            shutil.move(str(caminho), str(final))
+            print(f"[ORGANIZADO] {caminho} -> {final}", file=sys.stderr)
+            return final
+        except Exception as erro:  # organização é cosmética: nunca perde o arquivo
+            print(f"[AVISO] Não foi possível organizar em subpasta: {erro}",
+                  file=sys.stderr)
+            return caminho
 
     def processar_fila(self, *, max_tentativas: int = 3, intervalo: float = 0) -> int:
         interrompidos = self.fila.reabrir_interrompidos()

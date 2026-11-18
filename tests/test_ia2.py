@@ -315,7 +315,7 @@ class _CapasFalsas:
     def __init__(self, capa):  # noqa: ANN001
         self.capa = capa
 
-    def buscar_e_baixar(self, info, url_origem=None):  # noqa: ANN001
+    def buscar_e_baixar(self, info, url_origem=None, thumbnail=None):  # noqa: ANN001
         return self.capa
 
 

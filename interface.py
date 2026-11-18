@@ -67,6 +67,7 @@ class ControladorInterface:
             self.config = derivar_configuracoes(self.preferencias, configuracoes)
             self.aplicacao = Aplicacao(self.config)
         self.aplicacao.config.preparar_diretorios()
+        self._ultimo_caminho = ""
 
     # -- pesquisa e downloads (núcleo da IA 1 + metadados da IA 2) ---------
     def pesquisar(self, consulta: str):
@@ -74,12 +75,32 @@ class ControladorInterface:
             consulta, self.preferencias.limite_pesquisa)
 
     def baixar(self, url: str, formato: str, ao_progresso=None,
-               politica: str | None = None) -> tuple[bool, str]:
-        return self.aplicacao.baixar(url, formato, ao_progresso=ao_progresso,
-                                     politica=politica)
+               politica: str | None = None,
+               contexto=None) -> tuple[bool, str]:
+        resultado = self.aplicacao.baixar(url, formato, ao_progresso=ao_progresso,
+                                          politica=politica, contexto=contexto)
+        caminho = getattr(self.aplicacao, "ultimo_caminho", "")
+        if caminho:
+            self._ultimo_caminho = str(caminho)
+        return resultado
 
     def pasta_dados(self) -> Path:
         return self.config.dados
+
+    def ultimo_caminho(self) -> str:
+        """Caminho do último arquivo publicado (para exibir/abrir)."""
+        return self._ultimo_caminho
+
+    def abrir_pasta_do_arquivo(self, caminho: str) -> None:
+        alvo = Path(caminho)
+        pasta = alvo.parent if alvo.suffix else alvo
+        pasta.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            os.startfile(str(pasta))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            os.system(f'open "{pasta}"')
+        else:
+            os.system(f'xdg-open "{pasta}" >/dev/null 2>&1 &')
 
     def resumo_musical(self) -> dict[str, Any]:
         """Resumo do último enriquecimento (álbum/ano/capa) para a tela.
@@ -200,12 +221,10 @@ def _data_legivel(valor: Any) -> str:
 
 
 def _parece_falta_de_login(mensagem: str) -> bool:
-    """Sinais clássicos de conteúdo que exige login/cookies (sem inventar)."""
-    texto = (mensagem or "").lower()
-    sinais = ("sign in", "login", "log in", "confirm your age", "age-restricted",
-              "faça login", "idades", "members-only", "private video",
-              "this video is private", "cookies")
-    return any(sinal in texto for sinal in sinais)
+    """Compatibilidade: delega ao classificador único de erros (diagnostico.py)."""
+    from diagnostico import classificar
+
+    return classificar(mensagem).exige_cookies
 
 
 def _resumo_texto(resumo: dict[str, Any]) -> str:
@@ -514,7 +533,7 @@ class AplicativoGrafico:
         indice = self.resultados_tree.index(escolha[0])
         return self._resultados[indice] if indice < len(self._resultados) else None
 
-    def _baixar(self, url: str, formato: str) -> None:
+    def _baixar(self, url: str, formato: str, contexto: Any = None) -> None:
         self._definir_status(f"Preparando {formato.upper()}...")
         item = self.downloads_tree.insert("", "end", values=(
             url, formato.upper(), "0%", "", "", "Preparando"))
@@ -529,7 +548,10 @@ class AplicativoGrafico:
             if sucesso:
                 self.downloads_tree.item(item, values=(
                     url, formato.upper(), "100%", "", "", "Concluído"))
+                caminho_final = self.controlador.ultimo_caminho()
                 texto = f"[OK] Download {formato.upper()} concluído."
+                if caminho_final:
+                    texto += f" Arquivo: {caminho_final}"
                 resumo = self.controlador.resumo_musical()
                 if resumo:
                     texto += " " + _resumo_texto(resumo)
@@ -542,18 +564,26 @@ class AplicativoGrafico:
                 self.downloads_tree.item(item, values=(
                     url, formato.upper(), "", "", "", f"Falhou: {mensagem[:60]}"))
                 self._registrar(f"[ERRO] {mensagem}")
-                if _parece_falta_de_login(mensagem):
-                    self._registrar(
-                        "[DICA] Este erro costuma indicar que o conteúdo exige "
-                        "autenticação. Importe seu cookies.txt em Configurações → "
-                        "COOKIES DO YOUTUBE e tente de novo.")
+                diagnostico = getattr(self.controlador.aplicacao,
+                                      "ultimo_diagnostico", None)
+                if diagnostico is not None:
+                    from diagnostico import dica_para_interface
+
+                    tem_cookies = bool(self.controlador.status_cookies().configurado)
+                    dica = dica_para_interface(diagnostico, tem_cookies)
+                    if dica and dica != mensagem:
+                        self._registrar(f"[DICA] {dica}")
+                    if diagnostico.exige_cookies:
+                        self._definir_status(
+                            "Falhou por autenticação — veja a dica de cookies abaixo.")
                 self._definir_status("O download falhou; veja as mensagens.")
                 self.progresso.configure(value=0)
             self._atualizar_historico()
             self._atualizar_fila()
 
         def rodar():
-            return self.controlador.baixar(url, formato, ao_progresso=ao_progresso)
+            return self.controlador.baixar(url, formato, ao_progresso=ao_progresso,
+                                           contexto=contexto)
 
         def concluir_com_pergunta(resultado: tuple[bool, str]) -> None:
             sucesso, mensagem = resultado
@@ -610,7 +640,8 @@ class AplicativoGrafico:
     def _ao_baixar_selecionado(self) -> None:
         resultado = self._selecionado()
         if resultado:
-            self._baixar(resultado.url, self.formato_var.get())
+            self._baixar(resultado.url, self.formato_var.get(),
+                         contexto=resultado)
 
     def _ao_enfileirar_selecionado(self) -> None:
         resultado = self._selecionado()
@@ -826,6 +857,19 @@ class AplicativoGrafico:
         ttk.Checkbutton(downloads, text="Buscar e incorporar capas oficiais",
                         variable=self.capas_var).grid(
             row=6, column=0, columnspan=3, sticky="w", padx=6, pady=2)
+        self.organizar_var = tk.BooleanVar(
+            value=getattr(prefs, "organizar_nomes", True))
+        ttk.Checkbutton(downloads,
+                        text="Salvar como \"Artista - Título.mp3\" (nome organizado)",
+                        variable=self.organizar_var).grid(
+            row=8, column=0, columnspan=3, sticky="w", padx=6, pady=2)
+        self.por_album_var = tk.BooleanVar(
+            value=getattr(prefs, "organizar_por_album", False))
+        ttk.Checkbutton(
+            downloads,
+            text="Guardar em subpastas Artista/Álbum (só com dados confirmados)",
+            variable=self.por_album_var).grid(
+            row=9, column=0, columnspan=3, sticky="w", padx=6, pady=2)
 
         ttk.Button(quadro, text="Salvar configurações",
                    command=self._ao_salvar_config).pack(padx=8, pady=10, anchor="w")
@@ -950,6 +994,8 @@ class AplicativoGrafico:
             metadados_ativos=bool(self.metadados_var.get()),
             buscar_capas=bool(self.capas_var.get()),
             sobrescrita=sobrescrita,
+            organizar_nomes=bool(self.organizar_var.get()),
+            organizar_por_album=bool(self.por_album_var.get()),
         )
         try:
             self.controlador.salvar_preferencias(novas)

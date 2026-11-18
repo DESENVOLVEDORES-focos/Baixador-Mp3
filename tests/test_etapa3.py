@@ -231,7 +231,7 @@ class TestControladorInterface(AmbienteTemporario):
                                   genero="Rock", fonte="teste")
 
         class CapaFalsa:
-            def buscar_e_baixar(self, info, url_origem=None):  # noqa: ANN001
+            def buscar_e_baixar(self, info, url_origem=None, thumbnail=None):  # noqa: ANN001
                 return png_bytes()
 
         controlador = self._controlador(metadados_ativos=False)

@@ -148,10 +148,15 @@ class TestResumoDeErro(Base):
                    PopenDuplo(SAIDA_FALHA_404, 1)):
             sucesso, mensagem = app.baixar("https://example.org/x", "mp3")
         self.assertFalse(sucesso)
-        self.assertIn("HTTP Error 404", mensagem)
+        # A mensagem para o usuário é a orientação; a causa técnica fica no
+        # histórico (sanitizada) — os dois lados preservados.
+        self.assertIn("endereço não existe", mensagem)
+        self.assertEqual(app.ultimo_diagnostico.situacao, "nao_encontrado")
         registros = Historico(self.config).listar(10, incluir_erros=True)  # type: ignore[arg-type]
         self.assertEqual(registros[0]["status"], "erro")
         self.assertEqual(registros[0]["formato"], "mp3")
+        self.assertIn("nao_encontrado", registros[0]["mensagem"])
+        self.assertIn("HTTP Error 404", registros[0]["mensagem"])
 
 
 class TestProgresso(Base):

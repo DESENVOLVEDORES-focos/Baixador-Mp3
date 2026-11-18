@@ -140,6 +140,10 @@ class Preferencias:
     # O que fazer quando o arquivo final já existe (nunca sobrescreve por
     # acidente): perguntar | pular | renomear | sobrescrever
     sobrescrita: str = "perguntar"
+    # Nome apresentável "Artista - Título.ext" (desligado = nome do yt-dlp)
+    organizar_nomes: bool = True
+    # Guardar em Artista/Álbum/ quando a identificação musical confirmar
+    organizar_por_album: bool = False
 
     def validar(self) -> None:
         if self.formato_padrao not in ("mp3", "mp4"):
@@ -233,6 +237,8 @@ def derivar_configuracoes(prefs: Preferencias,
         diretorio_videos=Path(prefs.diretorio_mp4).expanduser() if prefs.diretorio_mp4 else None,
         caminho_cookies=cookies,
         qualidade_mp3=str(prefs.qualidade_mp3 or "0"),
+        organizar_nomes=bool(getattr(prefs, "organizar_nomes", True)),
+        organizar_por_album=bool(getattr(prefs, "organizar_por_album", False)),
         # "perguntar" é resolvido na interface; no núcleo o padrão seguro é
         # não sobrescrever (a pergunta acontece antes de baixar).
         sobrescrita="pular" if str(prefs.sobrescrita).lower() == "perguntar"

@@ -27,6 +27,11 @@ class Configuracoes:
     # Política quando o arquivo final já existe: pular (padrão, não sobrescreve),
     # renomear (cria "nome (2).mp3") ou sobrescrever (só com autorização explícita).
     sobrescrita: str = "pular"
+    # Nome "Artista - Título.ext" ao publicar (o yt-dlp baixa com ID; o nome
+    # apresentável é aplicado só no fim, depois da identificação musical).
+    organizar_nomes: bool = False
+    # Usar Artista/Álbum/ confirmados pela identificação como subpasta.
+    organizar_por_album: bool = False
 
     @property
     def ferramentas(self) -> Path:

@@ -172,6 +172,19 @@ _RE_PARENTESES = re.compile(r"\(([^)]*)\)")
 _RE_FEAT = re.compile(
     r"(?i)(?:\(|\[)?\s*(?:feat\.?|ft\.?|featuring|part\.?)\s+([^\)\]\|]+?)\s*(?:\)|\]|$)")
 _RE_SEPARADOR = re.compile(r"\s+[-–—]\s+|\s+-\s+|:\s+")
+_RE_ESPACOS_TITULO = re.compile(r"\s{2,}")
+# Sufixos do canal que NÃO fazem parte do nome do artista ("QueenVEVO",
+# "Queen - Topic", "Queen Official"). Só removemos quando sobra algo.
+_RE_SUFIXO_CANAL = re.compile(r"(?i)\s*(?:-\s*topic|vevo|official|oficial)\s*$")
+
+
+def limpar_nome_canal(canal: str | None) -> str:
+    """``"QueenVEVO"`` → ``"Queen"``; ``"Queen - Topic"`` → ``"Queen"``."""
+    texto = (canal or "").strip()
+    if not texto:
+        return ""
+    limpo = _RE_SUFIXO_CANAL.sub("", texto).strip(" -–—")
+    return limpo or texto
 
 
 def _sem_ruido(texto: str) -> str:
@@ -216,8 +229,7 @@ def analisar_titulo(titulo_bruto: str, canal: str | None = None) -> ConsultaMusi
         artista, titulo = partes[0].strip(), partes[1].strip()
 
     if not artista and canal:
-        canal_limpo = re.sub(r"(?i)\s*-\s*topic$", "", canal.strip())
-        canal_limpo = re.sub(r"(?i)\s*(vevo|official|oficial)$", "", canal_limpo).strip()
+        canal_limpo = limpar_nome_canal(canal)
         if canal_limpo and canal_limpo.lower() not in {"vários artistas", "various artists"}:
             artista = canal_limpo
 
@@ -227,6 +239,43 @@ def analisar_titulo(titulo_bruto: str, canal: str | None = None) -> ConsultaMusi
         participacao=participacao,
         bruto=bruto,
     )
+
+
+# Ruídos de título de VÍDEO (marcadores de publicação), não de versão musical.
+# "ao vivo"/"live"/"remaster" ficam de fora de propósito: "(Ao Vivo em SP)" e
+# "[Remastered 2011]" mudam a faixa e não podem sumir do nome do arquivo.
+_RUIDOS_VIDEO = (
+    "official video", "official music video", "official audio", "official lyric",
+    "lyric video", "lyrics video", "music video", "vídeo oficial", "video oficial",
+    "clipe oficial", "audio oficial", "videoclipe oficial", "visualizer",
+    "hd", "hq", "4k", "8k", "1080p", "720p", "480p", "legendado", "tradução",
+    "with lyrics", "com legenda", "letra", "letra oficial", "lyrics",
+)
+_RE_TRECHO = re.compile(r"\(([^)]*)\)|\[([^\]]*)\]")
+
+
+def limpar_titulo_video(titulo: str) -> str:
+    """Remove marcadores de publicação: ``(Official Video)``, ``[HD]``, ``(Lyrics)``.
+
+    Preserva informação musical de versão: ``[Remix]``, ``(Ao Vivo)``,
+    ``[Remastered 2011]``, ``(Acústico)`` permanecem no nome.
+    """
+    def _avaliar(match: re.Match[str]) -> str:
+        conteudo = (match.group(1) or match.group(2) or "").strip().lower()
+        if not conteudo:
+            return " "
+        # Ruído exato (ou começando por ele, ex.: "Official Video 4K").
+        for ruido in _RUIDOS_VIDEO:
+            if conteudo == ruido or conteudo.startswith(ruido + " "):
+                return " "
+        # Variações no fim do trecho: "(with lyrics)", "(official video 4k)".
+        if conteudo.endswith(("lyrics", "lyric", "official video", "video oficial",
+                              "legendado", "traduzido")):
+            return " "
+        return f" {match.group(1) or match.group(2)} "
+
+    texto = _RE_TRECHO.sub(_avaliar, str(titulo or ""))
+    return _RE_ESPACOS_TITULO.sub(" ", texto).strip(" -–—")
 
 
 def normalizar(texto: str | None) -> str:
@@ -555,6 +604,7 @@ class IdentificadorMusical:
 
 
 __all__ = [
+    "limpar_nome_canal", "limpar_titulo_video",
     "AssistenteHeuristico", "AssistenteIA", "AssistenteIAOpenAI", "ClienteHTTP",
     "ClienteHTTPUrllib", "ConsultaMusica", "ErroAPI", "IdentificadorMusical",
     "InfoMusica", "ProvedorDeezer", "ProvedorITunes", "ProvedorMusicBrainz",

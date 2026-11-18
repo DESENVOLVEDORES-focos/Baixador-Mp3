@@ -1,5 +1,58 @@
 # Changelog
 
+## 2026-11-17 — Identificação pelo resultado escolhido, nome apresentável e diagnóstico de erros
+
+Continuação da etapa anterior, motivada por uso real (yt-dlp 2026.10.26 +
+FFmpeg 9.0.2 + Mutagen, mídia servida por HTTP local).
+
+### Novos módulos
+
+- **`contexto.py`** — `ContextoMidia`: leva título, canal, duração, thumbnail e
+  URL do **resultado escolhido na pesquisa** até o download e a identificação.
+  `normalizar` aceita objeto, dicionário ou nada (nunca estoura) e
+  `como_metadados` omite campos vazios — nada de dado inventado.
+- **`organizacao.py`** — nome de arquivo portátil: `Artista - Título.ext`,
+  removendo caracteres proibidos no Windows, nomes reservados (`CON`, `NUL`,
+  `COM1`…), pontos/espaços finais e limitando cada componente a 150 caracteres
+  (o limite de caminho do Windows é 260). Também calcula a subpasta
+  `Artista/Álbum` e evita colisão (`(2)`).
+- **`diagnostico.py`** — traduz a saída técnica do yt-dlp em **situação +
+  ação recomendada** (idade, privado, membros, região, cookies vencidos, rede,
+  disco cheio, FFmpeg/yt-dlp ausente, URL inválida, já baixado) e **sanitiza**
+  URLs com `token=`, `sig=`, `Bearer …` antes de gravar em histórico/log.
+
+### Melhorado
+
+- **Identificação musical usa o resultado escolhido**, não o nome do arquivo:
+  título e canal vêm do `ContextoMidia`, a thumbnail do vídeo entra como último
+  recurso de capa (depois de iTunes/Deezer, nunca antes) e o resumo informa
+  `fonte` (`resultado_da_pesquisa` / `nome_do_arquivo`) e `identificado`.
+- **Nome final apresentável**: `(Official Video)`, `[HD]`, `(Lyrics)`,
+  `(Legendado)` saem; `[Remix]`, `[Ao Vivo]`, `[Remastered 2011]` **ficam** —
+  versão é informação. Cauda técnica do yt-dlp (`[dQw4w9WgXcQ]` ou
+  `[título inteiro repetido]`) é removida. `QueenVEVO`/`Queen Official` viram
+  `Queen`. O arquivo só é renomeado na **publicação** — a identificação continua
+  usando o nome original.
+- **Subpastas `Artista/Álbum`** (opcional, desligado por padrão): só com dados
+  confirmados pela identificação, só para MP3, e qualquer erro devolve o
+  arquivo onde estava. Colisão nunca sobrescreve.
+- **Nova aba Configurações**: "Salvar como `Artista - Título.mp3`" e "Guardar em
+  subpastas `Artista/Álbum`", sem editar Python.
+- **Erros deixam de ser "desconhecido"**: mensagens do próprio núcleo
+  (yt-dlp/FFmpeg ausente, URL inválida) também são classificadas.
+- **Histórico e `erros.jsonl`** gravam URL e mensagem sanitizadas (credenciais
+  fora dos logs).
+
+### Testes
+
+- `tests/test_organizacao_contexto.py`: 31 testes cobrindo saneamento de nome,
+  limpeza de ruído, cauda técnica, precedência de nome na publicação, subpastas
+  com/sem dados, colisão, `ContextoMidia` e classificador de erros.
+- Suíte completa: **128 passed, 1 skipped**; `pyflakes` limpo.
+- Validação manual real: MP3 (`.m4a` → MP3, tags aplicadas), MP4 320x240,
+  repetição do mesmo item (pulado, sem sobrescrever), 404 com mensagem em
+  português e organização em `Musicas/Queen/A Night at the Opera/`.
+
 ## 2026-11-17 — Etapa A/B (IA 3): correções reproduzidas + interface utilizável
 
 Todas as correções abaixo foram motivadas por defeitos **reproduzidos** com

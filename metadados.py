@@ -31,7 +31,7 @@ from typing import Any, Mapping
 from capas import GerenciadorCapas, validar_imagem
 from inteligencia import (
     ClienteHTTPUrllib, IdentificadorMusical, InfoMusica, analisar_titulo,
-    criar_assistente_padrao,
+    criar_assistente_padrao, limpar_nome_canal,
 )
 
 log = logging.getLogger("baixador.ia2.metadados")
@@ -189,29 +189,43 @@ class ProcessadorMusical:
         if not caminho.is_file() or caminho.stat().st_size == 0:
             raise ErroMetadados(f"MP3 inválido para metadados: {caminho}")
 
-        consulta = analisar_titulo(
-            caminho.stem, canal=metadados.get("canal") or metadados.get("uploader"))
+        # O resultado escolhido na pesquisa (contrato v2) é a melhor pista:
+        # título real do vídeo e canal. O nome do arquivo é o plano B, porque o
+        # yt-dlp trunca em 180 bytes e pode não ter separador "Artista - Título".
+        canonico = str(metadados.get("titulo") or "").strip()
+        canal = str(metadados.get("canal") or metadados.get("uploader") or "").strip()
+        entrada = canonico or caminho.stem
+        consulta = analisar_titulo(entrada, canal=canal or None)
+        if canonico and not consulta.artista and not canal:
+            # Sem canal e sem separador: tenta também o nome do arquivo.
+            consulta = analisar_titulo(caminho.stem, canal=None)
+            entrada = caminho.stem
         info: InfoMusica | None = None
         try:
-            info = self.identificador.identificar(
-                caminho.stem, canal=metadados.get("canal") or metadados.get("uploader"))
+            info = self.identificador.identificar(entrada, canal=canal or None)
         except Exception as erro:  # identificação nunca derruba o enriquecimento
             log.warning("Identificação falhou para %s: %s", caminho.name, erro)
 
         if info is None:
-            # Sem confirmação externa: usa só o que o próprio arquivo informa.
+            # Sem confirmação externa: grava os dados do próprio vídeo, que são
+            # fatos (título e canal informados pela fonte) — nunca álbum/ano/
+            # gênero inventados.
             info = InfoMusica(
-                titulo=consulta.titulo,
-                artista=consulta.artista or "",
-                fonte="nome_do_arquivo", confianca=0.0)
-            log.info("Sem identificação externa para %r; usando o nome do arquivo.",
-                     caminho.name)
+                titulo=consulta.titulo or caminho.stem,
+                artista=consulta.artista or limpar_nome_canal(canal),
+                fonte="resultado_da_pesquisa" if canonico else "nome_do_arquivo",
+                confianca=0.0)
+            log.info("Sem identificação externa para %r; usando título/canal do "
+                     "próprio resultado.", caminho.name)
 
         capa: bytes | None = None
         if self.config.buscar_capa:
             try:
+                # A URL do vídeo permite a thumbnail oficial como último recurso
+                # (só quando nenhuma capa de álbum foi validada).
                 capa = self.gerenciador_capas.buscar_e_baixar(
-                    info, url_origem=metadados.get("url"))
+                    info, url_origem=metadados.get("url"),
+                    thumbnail=metadados.get("thumbnail"))
             except Exception as erro:
                 log.warning("Busca de capa falhou para %s: %s", caminho.name, erro)
 
@@ -220,6 +234,8 @@ class ProcessadorMusical:
             "titulo": info.titulo, "artista": info.artista, "album": info.album,
             "ano": info.ano, "genero": info.genero, "fonte": info.fonte,
             "confianca": info.confianca, "capa_incorporada": capa is not None,
+            "identificado": info.fonte not in {"nome_do_arquivo",
+                                               "resultado_da_pesquisa"},
         }
         log.info("Metadados gravados em %s: %s", caminho.name, self.ultimo_resumo)
         return None

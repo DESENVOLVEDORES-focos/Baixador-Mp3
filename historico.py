@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from configuracoes import CONFIG, Configuracoes
+from diagnostico import sanitizar
 
 
 class Historico:
@@ -20,13 +21,14 @@ class Historico:
                   caminho: str | Path | None = None, mensagem: str = "",
                   inicio: str | None = None) -> dict[str, Any]:
         """Grava um registro; ``data_hora`` é a data do registro (a exibida)."""
+        # Credenciais nunca vão para disco: o yt-dlp pode ecoar URLs com token.
         registro: dict[str, Any] = {
             "data_hora": datetime.now(timezone.utc).isoformat(),
-            "url": url,
+            "url": sanitizar(url),
             "formato": formato,
             "status": status,
             "caminho": str(caminho) if caminho is not None else None,
-            "mensagem": mensagem,
+            "mensagem": sanitizar(mensagem),
             "inicio": inicio,
         }
         destino = self.config.erros if status.startswith("erro") else self.config.historico

@@ -32,6 +32,10 @@ from typing import Callable, Literal
 from urllib.parse import urlsplit
 
 from configuracoes import CONFIG, Configuracoes, argumentos_cookies
+from organizacao import (
+    caminho_disponivel, limpar_componente, nome_arquivo,
+    titulo_e_artista_do_arquivo,
+)
 
 Formato = Literal["mp3", "mp4"]
 
@@ -40,6 +44,10 @@ EXTENSOES_INTERMEDIARIAS = {
     ".part", ".ytdl", ".temp", ".m4a", ".webm", ".opus", ".ogg", ".aac",
     ".mp4", ".mkv", ".flv", ".3gp", ".mpga", ".wav", ".srt", ".vtt",
 }
+
+# Cauda entre colchetes acrescentada pelo yt-dlp: "[dQw4w9WgXcQ]" ou, quando a
+# URL não tem ID, "[<título inteiro>]". Só "[Remix]"-style fica.
+_RE_CAUDA = re.compile(r"\s*\[([^\]]*)\]\s*$")
 
 ETAPA_BAIXANDO = "Baixando"
 ETAPA_CONVERTENDO = "Convertendo para MP3"
@@ -169,6 +177,28 @@ def _texto(valor: str | bytes | None) -> str:
     return valor or ""
 
 
+def _sem_cauda_tecnica(nome: str) -> str:
+    """Remove caudas ``[...]`` que são técnica (ID, nome repetido), não versão.
+
+    ``"[dQw4w9WgXcQ]"`` (ID), ``"[Queen - Bohemian Rhapsody (Official Video)]"``
+    (título duplicado) saem; ``"[Remix]"``, ``"[Ao Vivo]"``, ``"[HD]"`` ficam.
+    """
+    atual = nome.strip()
+    while True:
+        achado = _RE_CAUDA.search(atual)
+        if achado is None:
+            return atual
+        conteudo = achado.group(1).strip()
+        tecnica = (
+            len(conteudo) > 24                      # texto longo não é tag
+            or " - " in conteudo                    # repetição de "Artista - Título"
+            or (len(conteudo) >= 6 and " " not in conteudo)  # ID do vídeo
+        )
+        if not tecnica:
+            return atual
+        atual = atual[:achado.start()].strip()
+
+
 class Downloader:
     def __init__(self, configuracoes: Configuracoes = CONFIG, timeout: int | None = None):
         self.config = configuracoes
@@ -250,6 +280,7 @@ class Downloader:
     def baixar(self, url: str, formato: Formato,
                ao_progresso: Callable[[Progresso], None] | None = None,
                politica: str | None = None,
+               contexto: object = None,
                ) -> ResultadoDownload:
         """Baixa para uma pasta de trabalho e só então publica no destino.
 
@@ -259,6 +290,11 @@ class Downloader:
         ``"titulo (20261118-005140)"`` e o ano/id contaminarem as tags.
         Com a pasta de trabalho, o nome publicado é sempre limpo e nenhum
         ``.m4a``/``.part`` aparece em ``Musicas/``/``Videos/``.
+
+        ``contexto`` (opcional) é o resultado escolhido na pesquisa
+        (``ContextoMidia``/dicionário/objeto). Quando o nome organizado está
+        ligado nas preferências, ele dá o nome apresentável do arquivo; caso
+        contrário o nome do yt-dlp é mantido (comportamento anterior).
         """
         url = validar_url(url)
         self.config.preparar_diretorios()
@@ -312,7 +348,8 @@ class Downloader:
                     finalizado_em=datetime.now(timezone.utc).isoformat(),
                     stdout=stdout,
                 )
-            publicado = self._publicar(produzido, destino, politica_final)
+            publicado = self._publicar(produzido, destino, politica_final,
+                                       contexto=contexto)
             return ResultadoDownload(
                 url=url,
                 formato=formato,
@@ -325,22 +362,62 @@ class Downloader:
             shutil.rmtree(trabalho, ignore_errors=True)
             self._limpar_residuos(destino, antes, None)
 
-    def _publicar(self, produzido: Path, destino: Path, politica: str) -> Path:
+    def _publicar(self, produzido: Path, destino: Path, politica: str,
+                  contexto: object = None) -> Path:
         """Move o arquivo da pasta de trabalho para o destino, com nome livre.
 
         ``pular``: já não chegamos aqui (a checagem aconteceu antes).
         ``renomear``/``baixar``: nome limpo; se colidir, acrescenta ``(2)``.
+        O nome organizado (``Artista - Título``) só é aplicado quando a
+        preferência ``organizar_nomes`` está ligada — antes disso o arquivo
+        mantém o nome do yt-dlp, que é a entrada da identificação musical.
         """
         destino.mkdir(parents=True, exist_ok=True)
-        alvo = destino / produzido.name
+        nome = produzido.name
+        if self._organizar():
+            nome = self._nome_organizado(produzido, contexto)
+        alvo = destino / nome
         if politica != "sobrescrever":
-            contador = 1
-            base, extensao = alvo.stem, alvo.suffix
-            while alvo.exists():
-                contador += 1
-                alvo = destino / f"{base} ({contador}){extensao}"
+            alvo = caminho_disponivel(destino, nome)
         shutil.move(str(produzido), str(alvo))
         return alvo.resolve()
+
+    def _organizar(self) -> bool:
+        return bool(getattr(self.config, "organizar_nomes", False))
+
+    def _nome_organizado(self, produzido: Path, contexto: object = None) -> str:
+        """``Artista - Título.ext`` a partir do contexto ou do nome do arquivo."""
+        extensao = produzido.suffix
+        titulo_contexto = ""
+        artista_contexto = ""
+        if contexto is not None:
+            try:
+                from contexto import ContextoMidia
+
+                dados = ContextoMidia.normalizar(contexto)
+                titulo_contexto = dados.titulo
+                artista_contexto = dados.canal
+            except Exception:  # contexto estranho nunca impede a publicação
+                titulo_contexto = artista_contexto = ""
+        from inteligencia import limpar_nome_canal, limpar_titulo_video
+
+        # Regra de precedência do nome apresentável:
+        # 1. O nome do arquivo do yt-dlp (``Título [id]``), que já é o título
+        #    real do vídeo — só o ID entre colchetes é removido. Usar isso como
+        #    TÍTULO evita duplicar quando o próprio título contém "Artista - ".
+        # 2. O título do resultado escolhido na pesquisa.
+        # 3. O nome cru do arquivo.
+        base = _sem_cauda_tecnica(produzido.stem) or produzido.stem
+        titulo = limpar_titulo_video(base) or base or titulo_contexto
+        # Artista: o canal do resultado, ou a parte antes de " - " no nome.
+        artista = limpar_nome_canal(artista_contexto)
+        if not artista:
+            _, artista_arquivo = titulo_e_artista_do_arquivo(produzido.name)
+            artista = artista_arquivo
+        # "(Official Video)", "[HD]", "(Lyrics)" saem do nome; "[Remix]" fica.
+        nome = nome_arquivo(titulo=titulo, artista=artista,
+                            desconhecido=produzido.stem)
+        return f"{nome}{extensao}"
 
     def _executar(self, argumentos: list[str],
                   ao_progresso: Callable[[Progresso], None] | None
@@ -437,7 +514,12 @@ class Downloader:
             return None, politica
         titulo = self.titulo_esperado(url)
         if titulo:
-            final = destino / f"{titulo}{'.mp3' if formato == 'mp3' else '.mp4'}"
+            nome = titulo
+            if self._organizar():
+                titulo_limpo, artista_limpo = titulo_e_artista_do_arquivo(titulo)
+                nome = nome_arquivo(titulo=titulo_limpo, artista=artista_limpo,
+                                    desconhecido=limpar_componente(titulo))
+            final = destino / f"{nome}{'.mp3' if formato == 'mp3' else '.mp4'}"
             try:
                 if final.is_file() and final.stat().st_size > 0:
                     return None, "pular"

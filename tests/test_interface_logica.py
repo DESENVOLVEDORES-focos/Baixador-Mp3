@@ -108,8 +108,9 @@ class TestControlador(AmbienteTemp):
         controlador = self._controlador(metadados_ativos=False)
         recebido = {}
 
-        def baixar_falso(url, formato, ao_progresso=None, politica=None):
-            recebido.update(url=url, formato=formato,
+        def baixar_falso(url, formato, ao_progresso=None, politica=None,
+                         contexto=None):
+            recebido.update(url=url, formato=formato, contexto=contexto,
                             tem_callback=callable(ao_progresso), politica=politica)
             if ao_progresso:
                 from downloader import Progresso
@@ -119,12 +120,16 @@ class TestControlador(AmbienteTemp):
 
         controlador.aplicacao.downloader = SimpleNamespace(baixar=baixar_falso)  # type: ignore[assignment]
         eventos = []
+        from contexto import ContextoMidia
+
+        ctx = ContextoMidia(titulo="Bohemian Rhapsody", canal="Queen")
         ok, _ = controlador.baixar("https://exemplo.test/x", "mp3",
                                    ao_progresso=eventos.append,
-                                   politica="renomear")
+                                   politica="renomear", contexto=ctx)
         self.assertTrue(ok)
         self.assertTrue(recebido["tem_callback"])
         self.assertEqual(recebido["politica"], "renomear")
+        self.assertEqual(recebido["contexto"].canal, "Queen")
         self.assertEqual(eventos[0].percentual, 42.0)
 
     def test_resumo_musical_exposto_sem_inventar(self):

@@ -170,3 +170,41 @@
 ### Pendências
 - Validar a janela em um Windows real (dois cliques no `.bat`) e o DPAPI nesse sistema.
 - Mesma pendência da Etapa 2: teste ao vivo completo com rede liberada e yt-dlp/FFmpeg.
+
+## 2026-11-17 — Identificação pelo resultado escolhido, nomes e diagnóstico
+
+### Método
+- Mesmo ambiente da etapa anterior (yt-dlp 2026.10.26, FFmpeg 9.0.2 via
+  imageio-ffmpeg, Mutagen, Pillow), mídia por `http.server` local.
+- Cada melhoria foi validada baixando de verdade; os defeitos abaixo apareceram
+  **no teste real**, não em revisão de código.
+
+### Defeitos encontrados durante a validação real
+1. `yt-dlp não encontrado` caía em "erro desconhecido" → classificador passou a
+   reconhecer mensagens do próprio núcleo (yt-dlp/FFmpeg ausente, URL inválida).
+2. `Queen - Bohemian Rhapsody (Official Video)` saía com o nome inteiro, sem
+   limpeza → `limpar_titulo_video` remove marcadores de publicação e preserva
+   tags de versão.
+3. Nome do arquivo com título repetido entre colchetes gerava
+   `Queen - Bohemian Rhapsody Queen - ...` → cauda técnica removida.
+4. `nome_arquivo` prefixava o artista quando o título já começava por ele
+   (`Queen - Queen - …`) → comparação sem diferenciar maiúsculas.
+5. Primeira versão da limpeza apagava `(Ao Vivo em SP)` — informação musical
+   real. Lista de ruídos separada da lista de versões resolve.
+
+### Decisões
+- **Renomear só na publicação** (`_publicar`), nunca antes do download: o nome
+  do arquivo é pista de identificação.
+- **Contexto vence o nome do arquivo** na identificação, mas o nome do arquivo
+  ainda manda na hora de montar o nome final quando já é `Artista - Título`.
+- **Subpastas por álbum são cosméticas**: nunca podem custar um download —
+  qualquer exceção devolve o caminho original.
+- **Nada de credenciais em log**: `Historico.registrar` sanitiza URL e mensagem;
+  teste confere que um segredo plantado não aparece no arquivo.
+
+### Verificação
+- `pytest -q`: 128 passed, 1 skipped, 8 subtests; `pyflakes` limpo.
+- Manual: `Musicas/Queen - Bohemian Rhapsody.mp3` (nome e tags corretos),
+  `Videos/Video Clip - Cena Legal.mp4`, segundo download do mesmo item
+  **pulado**, 404 → "O endereço não existe mais…", subpasta
+  `Musicas/Queen/A Night at the Opera/` quando há álbum confirmado.

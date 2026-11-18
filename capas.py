@@ -207,10 +207,21 @@ class GerenciadorCapas:
         return lista
 
     def buscar_e_baixar(self, info: InfoMusica,
-                        url_origem: str | None = None) -> bytes | None:
-        """Baixa a melhor capa válida; ``None`` se nenhuma fonte entregar."""
+                        url_origem: str | None = None,
+                        thumbnail: str | None = None) -> bytes | None:
+        """Baixa a melhor capa válida; ``None`` se nenhuma fonte entregar.
+
+        ``thumbnail`` (do resultado escolhido) é usada apenas como último
+        recurso, junto da miniatura derivada da URL do vídeo: capa de álbum
+        validada tem prioridade, como manda a regra de não usar imagem aleatória.
+        """
         reserva: bytes | None = None
-        for candidato in self.candidatos(info, url_origem):
+        candidatos = self.candidatos(info, url_origem)
+        if thumbnail and thumbnail.startswith(("http://", "https://")):
+            if all(candidato.url != thumbnail for candidato in candidatos):
+                candidatos.append(CandidatoCapa(thumbnail, "thumbnail-do-video",
+                                                480, oficial=False))
+        for candidato in candidatos:
             try:
                 dados = self.cliente.get_bytes(candidato.url)
                 imagem = validar_imagem(dados)
