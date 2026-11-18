@@ -1237,6 +1237,8 @@ class CentralApp:
                    command=self._adicionar_da_playlist).pack(side="right", padx=4)
         ttk.Button(linha, text="Sem ao vivo/show",
                    command=self._filtrar_ao_vivo_playlist).pack(side="right", padx=4)
+        ttk.Button(linha, text="Listar mais",
+                   command=self._listar_mais_itens).pack(side="right", padx=4)
         self.arvore_playlist = ttk.Treeview(
             quadro, columns=("n", "titulo", "duracao", "situacao"),
             show="headings", height=7, selectmode="extended")
@@ -1342,12 +1344,53 @@ class CentralApp:
                 self.arvore_playlist.insert("", "end", iid=str(item.indice), values=(
                     item.indice, item.titulo, item.duracao_formatada,
                     "disponível" if item.disponivel else "privado/removido"))
-            minutos = int(playlist.duracao_total // 60)
-            self.playlist_titulo_var.set(
-                f"{playlist.titulo} — {playlist.quantidade} item(ns), ~{minutos} min")
+            self._mostrar_titulo_playlist(playlist)
             self.definir_status(f"Playlist listada: {playlist.quantidade} item(ns).")
 
         self._executar(lambda: self.central.listar_playlist(resultado.url), concluir)
+
+    def _mostrar_titulo_playlist(self, playlist: Any) -> None:
+        """Título honesto: quantos itens estão na tela e quantos existem."""
+        minutos = int(playlist.duracao_total // 60)
+        texto = (f"{playlist.titulo} — {playlist.quantidade} item(ns) na lista, "
+                 f"~{minutos} min")
+        if playlist.total_informado and playlist.restantes:
+            texto += f" · faltam {playlist.restantes} (de {playlist.total_informado})"
+        elif playlist.total_informado and not playlist.restantes:
+            texto += " · lista completa"
+        self.playlist_titulo_var.set(texto)
+
+    def _listar_mais_itens(self) -> None:
+        """Traz a próxima janela sem perder o que já está marcado."""
+        playlist = self._playlist_aberta
+        if playlist is None:
+            messagebox.showinfo("Playlist", "Abra uma playlist primeiro.")
+            return
+        if not playlist.truncada:
+            self.definir_status("A lista já está completa: nada mais a trazer.")
+            return
+        marcados = set(self.arvore_playlist.selection())
+        self.definir_status(f"Listando mais itens de \"{playlist.titulo}\"...")
+
+        def concluir(nova: Any) -> None:
+            self._playlist_aberta = nova
+            for item in self.arvore_playlist.get_children():
+                self.arvore_playlist.delete(item)
+            for item in nova.itens:
+                self.arvore_playlist.insert("", "end", iid=str(item.indice), values=(
+                    item.indice, item.titulo, item.duracao_formatada,
+                    "disponível" if item.disponivel else "privado/removido"))
+            # a marcação anterior continua válida (o número do item não muda)
+            if marcados:
+                self.arvore_playlist.selection_set(
+                    [iid for iid in marcados
+                     if self.arvore_playlist.exists(iid)])
+            self._mostrar_titulo_playlist(nova)
+            self.definir_status(
+                f"{nova.quantidade} item(ns) na lista"
+                + (f"; faltam {nova.restantes}." if nova.restantes else "; fim da lista."))
+
+        self._executar(lambda: self.central.listar_mais_playlist(playlist), concluir)
 
     def _marcar_playlist(self, marcar: bool) -> None:
         itens = self.arvore_playlist.get_children()

@@ -143,6 +143,13 @@ class Central(ServicosBase):
     def listar_playlist(self, url: str, limite: int = 200) -> Playlist:
         return listar_playlist(url, limite=limite, config=self.config)
 
+    def listar_mais_playlist(self, playlist: Playlist,
+                             quantidade: int = 200) -> Playlist:
+        """Próxima janela de uma playlist/canal longo (botão "Listar mais")."""
+        from playlist import listar_mais
+
+        return listar_mais(playlist, quantidade, config=self.config)
+
     # -- seleção ------------------------------------------------------------
     def adicionar_a_selecao(self, itens: Iterable[Any], *,
                             formato: str | None = None,

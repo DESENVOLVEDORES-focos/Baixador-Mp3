@@ -496,3 +496,86 @@ class TestFilaRecuperadaNaTela(TestCentralApp):
         self.assertIn("sessão anterior", app.fila_resumo_var.get())
         self.central.fila_recuperada = {}
         self.central.gerenciador.limpar()
+
+
+class TestListarMaisNaTela(unittest.TestCase):
+    """Botão "Listar mais" na playlist aberta: soma itens e preserva marcação.
+
+    Herdar de ``TestCentralApp`` duplicaria os testes dela e perderia a
+    montagem da janela; a janela simulada é criada aqui, uma vez só.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        TestCentralApp.setUpClass()
+        cls.app = TestCentralApp.app
+        cls.central = TestCentralApp.central
+
+    @classmethod
+    def tearDownClass(cls):
+        TestCentralApp.tearDownClass()
+
+    def _playlist(self, quantidade: int, total: int | None, inicio: int = 1):
+        from playlist import ItemPlaylist, Playlist
+
+        itens = tuple(
+            ItemPlaylist(indice=numero, id=f"id{numero}",
+                         titulo=f"Faixa {numero}",
+                         url=f"https://y/watch?v=id{numero}",
+                         duracao=180)
+            for numero in range(inicio, inicio + quantidade))
+        return Playlist(titulo="Canal Grande",
+                        url="https://y/playlist?list=PL1",
+                        itens=itens, total_informado=total,
+                        truncada=bool(total is None or quantidade < total))
+
+    def test_listar_mais_acrescenta_sem_perder_marcacao(self):
+        app = self.app
+        app.mostrar("pesquisar")
+        primeira = self._playlist(200, 1200)
+        app._playlist_aberta = primeira
+        app.playlist_titulo_var.set("Carregando...")
+        for item in primeira.itens:
+            app.arvore_playlist.insert("", "end", iid=str(item.indice),
+                                       values=(item.indice, item.titulo, "3:00",
+                                               "disponível"))
+        app.arvore_playlist.selection_set(["5", "9"])
+
+        segunda = self._playlist(400, 1200)
+        with patch.object(self.central, "listar_mais_playlist",
+                          return_value=segunda), \
+                patch.object(app, "_executar",
+                             side_effect=lambda trabalho, concluir=None, falhar=None:
+                             concluir(trabalho()) if concluir else trabalho()):
+            app._listar_mais_itens()
+        self.assertEqual(len(app.arvore_playlist.get_children()), 400)
+        self.assertEqual(set(app.arvore_playlist.selection()), {"5", "9"})
+        self.assertIn("400 item", app.playlist_titulo_var.get())
+        self.assertIn("faltam 800", app.playlist_titulo_var.get())
+
+    def test_lista_completa_avisa_em_vez_de_chamar_rede(self):
+        app = self.app
+        app._playlist_aberta = self._playlist(50, 50)
+        with patch.object(self.central, "listar_mais_playlist") as acao:
+            app._listar_mais_itens()
+        acao.assert_not_called()
+        self.assertIn("completa", app.status_var.get())
+
+    def test_sem_playlist_aberta_nao_explode(self):
+        app = self.app
+        app._playlist_aberta = None
+        # o módulo importa ``messagebox`` direto; o dublê fica no atributo
+        with patch.object(self.origem_modulo(), "messagebox") as caixa:
+            with patch.object(caixa, "showinfo") as aviso:
+                app._listar_mais_itens()
+        aviso.assert_called_once()
+
+    def test_titulo_mostra_total_quando_conhecido(self):
+        app = self.app
+        app._mostrar_titulo_playlist(self._playlist(200, None))
+        self.assertIn("200 item", app.playlist_titulo_var.get())
+        self.assertNotIn("faltam", app.playlist_titulo_var.get())
+
+    @staticmethod
+    def origem_modulo():
+        return TestCentralApp.modulo

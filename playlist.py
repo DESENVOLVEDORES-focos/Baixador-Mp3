@@ -22,8 +22,12 @@ from configuracoes import CONFIG, Configuracoes, argumentos_cookies
 
 log = logging.getLogger("baixador.playlist")
 
-LIMITE_PADRAO = 200      # itens listados (playlists enormes ficam impraticáveis)
-LIMITE_MAXIMO = 500
+LIMITE_PADRAO = 200      # itens listados de uma vez
+# Teto por listagem. Não é mais 500: canais/playlists grandes passaram a ser
+# paginados (ver ``listar_mais``), então o teto só evita pedir o universo.
+LIMITE_MAXIMO = 2000
+# Quantos itens cada clique em "Listar mais" acrescenta.
+PASSO_PADRAO = 200
 
 
 class ErroPlaylist(RuntimeError):
@@ -87,14 +91,24 @@ def parece_playlist(url: str) -> bool:
 
 
 def construir_comando(url: str, limite: int = LIMITE_PADRAO,
-                      config: Configuracoes = CONFIG) -> list[str]:
-    """argv do yt-dlp para listar a playlist **sem baixar nada**."""
-    limite = max(1, min(int(limite or LIMITE_PADRAO), LIMITE_MAXIMO))
+                      config: Configuracoes = CONFIG,
+                      inicio: int = 1) -> list[str]:
+    """argv do yt-dlp para listar a playlist **sem baixar nada**.
+
+    ``inicio``/``limite`` formam a janela (1-based, inclusiva). É o que permite
+    trazer de 200 em 200 sem pedir 1.200 itens de uma vez.
+    """
+    inicio = max(1, int(inicio or 1))
+    limite = max(inicio, min(int(limite or LIMITE_PADRAO), LIMITE_MAXIMO))
+    janela = []
+    if inicio > 1:
+        janela += ["--playlist-start", str(inicio)]
+    janela += ["--playlist-end", str(limite)]
     return [
         *config.comando_yt_dlp(),
         "--ignore-config", "--no-warnings", "--skip-download",
         *argumentos_cookies(config),
-        "--flat-playlist", "--playlist-end", str(limite),
+        "--flat-playlist", *janela,
         "--dump-single-json", url,
     ]
 
@@ -127,14 +141,19 @@ def _duracao(valor: Any) -> int | None:
 
 
 def montar_playlist(dados: dict[str, Any], url: str = "",
-                    limite: int = LIMITE_PADRAO) -> Playlist:
-    """Transforma o JSON do yt-dlp em ``Playlist`` (tolerante a itens quebrados)."""
+                    limite: int = LIMITE_PADRAO, inicio: int = 1) -> Playlist:
+    """Transforma o JSON do yt-dlp em ``Playlist`` (tolerante a itens quebrados).
+
+    ``inicio`` desloca o número de cada item: na segunda página (início 201) o
+    primeiro item é o 201 da playlist, não o 1 — a tela mostra o número real.
+    """
     entradas = dados.get("entries")
     if entradas is None:
         # URL de vídeo único: devolve playlist de um item (a interface avisa).
         entradas = [dados]
     itens: list[ItemPlaylist] = []
-    for indice, entrada in enumerate(entradas or [], start=1):
+    deslocamento = max(0, int(inicio or 1) - 1)
+    for indice, entrada in enumerate(entradas or [], start=1 + deslocamento):
         if not isinstance(entrada, dict):
             continue
         identificador = str(entrada.get("id") or "").strip()
@@ -175,20 +194,23 @@ def montar_playlist(dados: dict[str, Any], url: str = "",
         canal=str(dados.get("channel") or dados.get("uploader") or "").strip(),
         itens=tuple(itens),
         total_informado=total,
-        truncada=bool(total and len(itens) < total) or len(itens) >= limite,
+        # Truncada de verdade = ainda existe item além da janela pedida.
+        truncada=bool(total and (deslocamento + len(itens)) < total)
+        or (total is None and len(itens) >= limite),
         # Só para a interface avisar honestamente o que ficou de fora.
     )
 
 
 def listar(url: str, limite: int = LIMITE_PADRAO, config: Configuracoes = CONFIG,
-           timeout: int = 120) -> Playlist:
+           timeout: int = 120, inicio: int = 1) -> Playlist:
     """Lista os itens da playlist/canal sem baixar mídia."""
     url = (url or "").strip()
     if not url.lower().startswith(("http://", "https://")):
         raise ErroPlaylist("Informe a URL da playlist (começando com http).")
     try:
         processo = subprocess.run(
-            construir_comando(url, limite, config), capture_output=True,
+            construir_comando(url, limite, config, inicio=inicio),
+            capture_output=True,
             text=True, encoding="utf-8", errors="replace", timeout=timeout,
             check=False)
     except (OSError, subprocess.TimeoutExpired) as erro:
@@ -197,7 +219,8 @@ def listar(url: str, limite: int = LIMITE_PADRAO, config: Configuracoes = CONFIG
         detalhes = (processo.stderr or processo.stdout or "").strip()
         ultimo = detalhes.splitlines()[-1] if detalhes else ""
         raise ErroPlaylist(ultimo or f"yt-dlp terminou com código {processo.returncode}.")
-    playlist = montar_playlist(carregar_json(processo.stdout), url, limite)
+    playlist = montar_playlist(carregar_json(processo.stdout), url, limite,
+                               inicio=inicio)
     if not playlist.itens:
         raise ErroPlaylist(
             "A playlist não tem itens acessíveis (privada, vazia ou removida).")
@@ -220,8 +243,55 @@ def selecionar(playlist: Playlist, indices: list[int] | None = None,
     return resultado
 
 
+def listar_mais(playlist: Playlist, quantidade: int | None = None,
+                config: Configuracoes = CONFIG, timeout: int = 120) -> Playlist:
+    """Acrescenta a próxima janela de itens sem duplicar nem perder a ordem.
+
+    Usada pelo botão "Listar mais": se a playlist tem 1.200 itens e a tela já
+    mostrou 200, a próxima chamada pede de 201 a 400 e devolve uma ``Playlist``
+    com os 400. O total informado é preservado para a tela dizer "200 de 1.200".
+    """
+    if not playlist.url:
+        raise ErroPlaylist("Playlist sem URL: não há como listar mais itens.")
+    passo = max(1, int(quantidade or PASSO_PADRAO))
+    ja_temos = len(playlist.itens)
+    if playlist.total_informado is not None and ja_temos >= playlist.total_informado:
+        return playlist  # nada a fazer; a tela avisa que acabou
+    inicio = ja_temos + 1
+    while True:
+        nova = listar(playlist.url, limite=inicio + passo - 1, config=config,
+                      timeout=timeout, inicio=inicio)
+        novos = [item for item in nova.itens
+                 if item.id not in {existente.id for existente in playlist.itens}]
+        if novos:
+            break
+        # Página sem item novo (repetida ou vazia): não insiste para sempre.
+        if not nova.itens or nova.total_informado is None:
+            return playlist
+        passo *= 2
+        inicio = ja_temos + 1
+        if passo > LIMITE_MAXIMO:
+            return playlist
+    itens = tuple(playlist.itens) + tuple(novos)
+    # Reenumera pela ordem final, para a tela nunca mostrar número repetido.
+    renumerados = tuple(
+        ItemPlaylist(indice=posicao, id=item.id, titulo=item.titulo,
+                     url=item.url, duracao=item.duracao, canal=item.canal,
+                     disponivel=item.disponivel)
+        for posicao, item in enumerate(itens, start=1))
+    total = nova.total_informado or playlist.total_informado
+    return Playlist(
+        titulo=playlist.titulo or nova.titulo,
+        url=playlist.url,
+        itens=renumerados,
+        total_informado=total,
+        truncada=bool(total is None or len(renumerados) < total),
+        canal=playlist.canal or nova.canal,
+    )
+
+
 __all__ = [
-    "ErroPlaylist", "ItemPlaylist", "LIMITE_MAXIMO", "LIMITE_PADRAO", "Playlist",
-    "construir_comando", "listar", "montar_playlist", "parece_playlist",
-    "selecionar",
+    "ErroPlaylist", "ItemPlaylist", "LIMITE_MAXIMO", "LIMITE_PADRAO",
+    "PASSO_PADRAO", "Playlist", "construir_comando", "listar", "listar_mais",
+    "montar_playlist", "parece_playlist", "selecionar",
 ]
