@@ -157,6 +157,10 @@ class Preferencias:
     duracao_maxima_min: int = 0
     filtrar_ao_vivo: bool = True                # desmarcar show/ao vivo ao listar
     replaygain: bool = False                   # mede o volume e grava o ReplayGain
+    # ---- resultados da pesquisa ------------------------------------------
+    pesquisa_deduplicar: bool = True           # esconde mesmo vídeo/canal repetido
+    pesquisa_sem_compilados: bool = False      # esconde mixes/compilados (>1 h)
+    pesquisa_so_com_duracao: bool = False      # esconde vídeo sem duração
     verificar_audio: bool = True               # confere o MP3 antes de "concluído"
     notificacoes: bool = True
     volume_reprodutor: int = 80

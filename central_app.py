@@ -1478,8 +1478,31 @@ class CentralApp:
                    command=self._pesquisar).pack(side="left")
 
         self.pesquisa_dica = tk.StringVar(value="")
+        self.pesquisa_filtro_dica = tk.StringVar(value="")
+
+        filtros = ttk.Frame(area)
+        filtros.pack(fill="x", pady=(4, 0))
+        prefs_pesquisa = self.central.preferencias
+        self.pesq_deduplicar = tk.BooleanVar(
+            value=bool(getattr(prefs_pesquisa, "pesquisa_deduplicar", True)))
+        self.pesq_sem_compilados = tk.BooleanVar(
+            value=bool(getattr(prefs_pesquisa, "pesquisa_sem_compilados", False)))
+        self.pesq_so_com_duracao = tk.BooleanVar(
+            value=bool(getattr(prefs_pesquisa, "pesquisa_so_com_duracao", False)))
+        ttk.Checkbutton(filtros, text="Esconder repetidos",
+                        variable=self.pesq_deduplicar,
+                        command=self._aplicar_filtros_pesquisa).pack(side="left")
+        ttk.Checkbutton(filtros, text="Sem compilados (>1 h)",
+                        variable=self.pesq_sem_compilados,
+                        command=self._aplicar_filtros_pesquisa).pack(
+            side="left", padx=8)
+        ttk.Checkbutton(filtros, text="Só com duração conhecida",
+                        variable=self.pesq_so_com_duracao,
+                        command=self._aplicar_filtros_pesquisa).pack(side="left")
         ttk.Label(area, textvariable=self.pesquisa_dica,
                   style="Fraco.TLabel").pack(anchor="w", pady=(6, 2))
+        ttk.Label(area, textvariable=self.pesquisa_filtro_dica,
+                  style="Fraco.TLabel").pack(anchor="w")
 
         corpo = ttk.Frame(area)
         corpo.pack(fill="both", expand=True, pady=4)
@@ -1561,30 +1584,84 @@ class CentralApp:
         self.definir_status(f"Pesquisando \"{consulta}\"...")
 
         def concluir(resultados: list[Any]) -> None:
-            self._resultados = resultados
-            for item in self.arvore_resultados.get_children():
-                self.arvore_resultados.delete(item)
-            for posicao, resultado in enumerate(resultados):
-                self.arvore_resultados.insert("", "end", iid=str(posicao), values=(
-                    getattr(resultado, "titulo", ""),
-                    getattr(resultado, "tipo_legivel", "Vídeo"),
-                    getattr(resultado, "canal", ""),
-                    getattr(resultado, "duracao_formatada", ""),
-                    "sim" if getattr(resultado, "canal_verificado", False) else "não"))
-            playlists = sum(1 for r in resultados
-                            if getattr(r, "eh_playlist", False))
-            if not resultados:
-                self.pesquisa_dica.set(
-                    "Nada encontrado. Tente outras palavras ou o tipo \"Tudo\".")
-            else:
-                self.pesquisa_dica.set(
-                    f"{len(resultados)} resultado(s)"
-                    + (f" · {playlists} playlist(s) — use \"Abrir playlist\""
-                       if playlists else "")
-                    + " · marque com Ctrl+clique e adicione à cesta.")
-            self.definir_status(f"{len(resultados)} resultado(s) encontrado(s).")
+            # Guarda TUDO o que veio: os filtros só escondem, não descartam.
+            self._resultados_brutos = list(resultados)
+            self._preencher_resultados(resultados)
 
         self._executar(lambda: self.central.pesquisar(consulta, tipo), concluir)
+
+    def _preencher_resultados(self, resultados: list[Any]) -> None:
+        """Insere os resultados na tabela e escreve o resumo honesto."""
+        self._resultados = list(resultados)
+        for item in self.arvore_resultados.get_children():
+            self.arvore_resultados.delete(item)
+        for posicao, resultado in enumerate(self._resultados):
+            duracao = getattr(resultado, "duracao_formatada", "")
+            segundos = getattr(resultado, "duracao", None)
+            if segundos and segundos > 3600:
+                duracao += " ⚠ compilado/mix de 1 h ou mais"
+            self.arvore_resultados.insert("", "end", iid=str(posicao), values=(
+                getattr(resultado, "titulo", ""),
+                getattr(resultado, "tipo_legivel", "Vídeo"),
+                getattr(resultado, "canal", ""),
+                duracao,
+                "sim" if getattr(resultado, "canal_verificado", False) else "não"))
+        playlists = sum(1 for r in self._resultados
+                        if getattr(r, "eh_playlist", False))
+        if not resultados:
+            self.pesquisa_dica.set(
+                "Nada encontrado. Tente outras palavras ou o tipo \"Tudo\".")
+            self.pesquisa_filtro_dica.set("")
+            self.definir_status("Nenhum resultado.")
+            return
+        self.pesquisa_dica.set(
+            f"{len(resultados)} resultado(s)"
+            + (f" · {playlists} playlist(s) — use \"Abrir playlist\""
+               if playlists else "")
+            + " · Ctrl+clique marca vários e Adicionar à cesta leva todos.")
+        self.definir_status(f"{len(resultados)} resultado(s) na lista.")
+        self._mostrar_filtros_pesquisa()
+
+    def _mostrar_filtros_pesquisa(self) -> None:
+        """Diz quantos resultados os filtros esconderam (e por quê)."""
+        contagem = dict(getattr(self.central, "ultima_contagem_pesquisa", {}) or {})
+        from pesquisa import descrever_filtro
+
+        resumo = descrever_filtro(contagem)
+        brutos = len(getattr(self, "_resultados_brutos", []) or [])
+        if resumo:
+            total = len(getattr(self, "_resultados", []) or [])
+            self.pesquisa_filtro_dica.set(
+                f"Filtros esconderam {brutos - total} de {brutos}: {resumo}. "
+                "Desmarque a caixa para vê-los.")
+        else:
+            self.pesquisa_filtro_dica.set("")
+
+    def _aplicar_filtros_pesquisa(self) -> None:
+        """Reaplica os filtros sobre o que já foi pesquisado (sem nova busca)."""
+        brutos = list(getattr(self, "_resultados_brutos", []) or [])
+        if not brutos:
+            return
+        from pesquisa import organizar_resultados
+
+        filtrados, contagem = organizar_resultados(
+            brutos,
+            remover_equivalentes=bool(self.pesq_deduplicar.get()),
+            esconder_compilados=bool(self.pesq_sem_compilados.get()),
+            exigir_duracao=bool(self.pesq_so_com_duracao.get()))
+        self.central.ultima_contagem_pesquisa = contagem
+        self._preencher_resultados(filtrados)
+        try:
+            self.central.preferencias = replace(
+                self.central.preferencias,
+                pesquisa_deduplicar=bool(self.pesq_deduplicar.get()),
+                pesquisa_sem_compilados=bool(self.pesq_sem_compilados.get()),
+                pesquisa_so_com_duracao=bool(self.pesq_so_com_duracao.get()))
+            gravar = getattr(self.central, "salvar_preferencias", None)
+            if callable(gravar):
+                gravar()
+        except Exception:
+            pass
 
     def _indices_selecionados(self, arvore: Any) -> list[int]:
         indices = []

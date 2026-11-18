@@ -145,8 +145,20 @@ class Central(ServicosBase):
 
     # -- pesquisa -----------------------------------------------------------
     def pesquisar(self, consulta: str, tipo: str = "tudo") -> list[Any]:
+        prefs = self.preferencias
         resultados = self.aplicacao.pesquisador.pesquisar(
-            consulta, self.preferencias.limite_pesquisa, tipo)
+            consulta, prefs.limite_pesquisa, tipo,
+            remover_equivalentes=bool(
+                getattr(prefs, "pesquisa_deduplicar", True)),
+            esconder_compilados=bool(
+                getattr(prefs, "pesquisa_sem_compilados", False)),
+            exigir_duracao=bool(
+                getattr(prefs, "pesquisa_so_com_duracao", False)))
+        try:
+            self.ultima_contagem_pesquisa = dict(getattr(
+                self.aplicacao.pesquisador, "ultima_contagem", {}) or {})
+        except Exception:
+            self.ultima_contagem_pesquisa = {}
         try:
             self.biblioteca.registrar_pesquisa(consulta, tipo)
         except Exception:
@@ -476,6 +488,14 @@ class Central(ServicosBase):
             1, min(4, int(getattr(novas, "downloads_simultaneos", 2))))
         self.reprodutor.volume = int(getattr(novas, "volume_reprodutor", 80))
         self._aplicar_ambiente(novas)
+
+    def salvar_preferencias(self) -> None:
+        """Grava as preferências atuais sem reaplicar nada (usado pela tela)."""
+        try:
+            self.preferencias.validar()
+            salvar(self.preferencias, self._base)
+        except Exception as erro:
+            log.info("Não foi possível salvar as preferências: %s", erro)
 
     def salvar_fila_nucleo(self, pares: Iterable[tuple[str, str]]) -> int:
         """Guarda os downloads no arquivo da fila do núcleo (retomada após fechar)."""

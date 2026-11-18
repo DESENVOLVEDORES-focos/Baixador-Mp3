@@ -57,9 +57,106 @@ class ErroPesquisa(RuntimeError):
     pass
 
 
+# Duração (segundos) acima disto é "compilado/coletânea", não música avulsa.
+DURACAO_DE_COMPILADO = 3600
+
+
+def _slug(texto: str) -> str:
+    """Título normalizado para comparar vídeos equivalentes.
+
+    Remove caixa, acento, emoji, "(Official Video)", "[4K]", "HD", "Lyrics" e
+    pontuação: ``Oficial`` e ``official`` são o mesmo vídeo. Nada é removido do
+    título mostrado ao usuário — isto serve só para deduplicar.
+    """
+    import re
+    import unicodedata
+
+    base = unicodedata.normalize("NFKD", (texto or "").casefold())
+    base = "".join(c for c in base if not unicodedata.combining(c))
+    # Só o selo de divulgação sai; "(Ao Vivo)", "(Remix)", "(Remastered 2011)"
+    # mudam a gravação e continuam contando como outra entrada.
+    base = re.sub(r"\b(official|oficial|videoclipe|video|clipe|lyric|lyrics|"
+                  r"letra|audio|hd|hq|visualizer|4k|8k)\b", " ", base)
+    base = re.sub(r"[^a-z0-9]+", " ", base)
+    return " ".join(base.split())
+
+
+def chave_equivalencia(resultado: "ResultadoPesquisa") -> str:
+    """Assinatura que faz dois resultados contarem como o mesmo vídeo."""
+    identidade = _slug(resultado.titulo) or (resultado.id or resultado.url)
+    return f"{_slug(resultado.canal)}|{identidade}"
+
+
+def _duracao(resultado: "ResultadoPesquisa") -> int | None:
+    return resultado.duracao if resultado.duracao is not None else None
+
+
+def organizar_resultados(resultados: list["ResultadoPesquisa"],
+                         *, remover_equivalentes: bool = True,
+                         esconder_compilados: bool = False,
+                         exigir_duracao: bool = False,
+                         ) -> tuple[list["ResultadoPesquisa"], dict[str, int]]:
+    """Ordena e filtra resultados **sem esconder nada sem explicar**.
+
+    Devolve ``(lista, contagem)`` onde ``contagem`` diz quantos foram
+    removidos por motivo (``duplicados``, ``compilados``, ``sem_duracao``).
+
+    Regras:
+    - vídeo antes de playlist antes de canal (uso mais comum primeiro);
+    - canal verificado antes (é evidência vinda do extrator, não palpite);
+    - duplicado = mesmo título normalizado no mesmo canal, ou mesmo id;
+    - ``esconder_compilados`` remove só o que passa de 1 hora (compilado/mix);
+    - ``exigir_duracao`` remove o que não tem duração conhecida.
+    """
+    contagem = {"duplicados": 0, "compilados": 0, "sem_duracao": 0}
+    ordem_tipo = {"video": 0, "playlist": 1, "canal": 2}
+    vistos_id: set[str] = set()
+    vistos_chave: set[str] = set()
+    mantidos: list[ResultadoPesquisa] = []
+    for resultado in resultados:
+        ident = resultado.id or resultado.url
+        if ident and ident in vistos_id:
+            contagem["duplicados"] += 1
+            continue
+        if ident:
+            vistos_id.add(ident)
+        if remover_equivalentes:
+            chave = chave_equivalencia(resultado)
+            if chave in vistos_chave:
+                contagem["duplicados"] += 1
+                continue
+            vistos_chave.add(chave)
+        if esconder_compilados:
+            duracao = _duracao(resultado)
+            if duracao is not None and duracao > DURACAO_DE_COMPILADO:
+                contagem["compilados"] += 1
+                continue
+        if exigir_duracao and resultado.tipo == "video" and _duracao(resultado) is None:
+            contagem["sem_duracao"] += 1
+            continue
+        mantidos.append(resultado)
+    mantidos.sort(key=lambda r: (ordem_tipo.get(r.tipo, 3),
+                                 not r.canal_verificado))
+    return mantidos, contagem
+
+
+def descrever_filtro(contagem: dict[str, int]) -> str:
+    """Frase honesta do que foi escondido (vazia quando nada foi)."""
+    partes = []
+    if contagem.get("duplicados"):
+        partes.append(f"{contagem['duplicados']} duplicado(s)")
+    if contagem.get("compilados"):
+        partes.append(f"{contagem['compilados']} compilado(s) longo(s)")
+    if contagem.get("sem_duracao"):
+        partes.append(f"{contagem['sem_duracao']} sem duração")
+    return ", ".join(partes)
+
+
 class Pesquisador:
     def __init__(self, configuracoes: Configuracoes = CONFIG, timeout: int = 90):
         self.config = configuracoes
+        # Preenchido a cada pesquisa (a tela mostra o que foi filtrado).
+        self.ultima_contagem: dict[str, int] = {}
         self.timeout = timeout
 
     def construir_comando(self, consulta: str, limite: int = 10,
@@ -96,7 +193,11 @@ class Pesquisador:
         ]
 
     def pesquisar(self, consulta: str, limite: int = 10,
-                  tipo: str = "tudo") -> list[ResultadoPesquisa]:
+                  tipo: str = "tudo", *,
+                  remover_equivalentes: bool = True,
+                  esconder_compilados: bool = False,
+                  exigir_duracao: bool = False,
+                  ) -> list[ResultadoPesquisa]:
         """Pesquisa no YouTube e devolve vídeos **e** playlists.
 
         ``tudo`` roda as duas buscas em paralelo (a busca nativa do yt-dlp só
@@ -141,14 +242,15 @@ class Pesquisador:
                 vistos.add(chave)
                 mesclados.append(item)
 
-        # Vídeos primeiro (é o uso mais comum), depois playlists e canais.
-        acrescentar([r for r in videos if not r.eh_playlist
-                     and r.tipo == "video"])
+        acrescentar(videos)
         acrescentar(playlists)
-        acrescentar([r for r in videos if r.tipo == "canal"])
-        acrescentar([r for r in videos if r.eh_playlist])
-        # Canal oficial primeiro dentro de cada grupo, sem inventar nada.
-        return mesclados[:max(limite, limite + limite_playlists)]
+        # Canal oficial primeiro dentro de cada grupo, sem inventar nada; aqui
+        # também saem os equivalentes (mesmo título/canal com "Official Video").
+        organizados, self.ultima_contagem = organizar_resultados(
+            mesclados, remover_equivalentes=remover_equivalentes,
+            esconder_compilados=esconder_compilados,
+            exigir_duracao=exigir_duracao)
+        return organizados[:max(limite, limite + limite_playlists)]
 
     def _pesquisar_uma(self, consulta: str, limite: int,
                        tipo: str) -> list[ResultadoPesquisa]:
