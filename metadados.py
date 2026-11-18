@@ -180,6 +180,18 @@ class ProcessadorMusical:
         self.identificador = identificador
         self.gerenciador_capas = gerenciador_capas
         self.ultimo_resumo: dict[str, Any] = {}
+        self.ultimo_erro_ia: str = ""
+        # Configuração do núcleo (cookies/dados/raiz) quando disponível; usada
+        # para achar a chave em api.txt. Sem ela, vale o padrão.
+        self._config_nucleo: Any = None
+
+    def config_objeto(self) -> Any:
+        """Configuração do núcleo (para achar ``api.txt``), com padrão seguro."""
+        if self._config_nucleo is not None:
+            return self._config_nucleo
+        from configuracoes import CONFIG
+
+        return CONFIG
 
     def processar_mp3(self, caminho: Path,
                       metadados: Mapping[str, Any]) -> None:
@@ -205,6 +217,39 @@ class ProcessadorMusical:
             info = self.identificador.identificar(entrada, canal=canal or None)
         except Exception as erro:  # identificação nunca derruba o enriquecimento
             log.warning("Identificação falhou para %s: %s", caminho.name, erro)
+
+        # IA com o prompt de identificação/catalogação (opcional: só quando há
+        # chave importada em api.txt e o usuário deixou ligada nas preferências).
+        # As APIs públicas têm prioridade; a IA completa o que faltar.
+        campos_da_ia: list[str] = []
+        dados_ia = None
+        if self.config.usar_ia:
+            try:
+                from identificacao_ia import criar_identificador
+
+                identificador_ia = criar_identificador(self.config_objeto())
+                if identificador_ia is not None:
+                    dados_ia = identificador_ia.identificar(entrada, canal=canal)
+                    self.ultimo_erro_ia = getattr(identificador_ia, "ultimo_erro", "")
+            except Exception as erro:  # IA nunca derruba o enriquecimento
+                self.ultimo_erro_ia = f"Falha ao consultar a IA: {erro}"
+                log.warning("Identificação por IA falhou para %s: %s",
+                            caminho.name, erro)
+            if dados_ia is not None:
+                if info is None:
+                    # Sem confirmação das APIs: a IA é a única fonte externa.
+                    info = InfoMusica(
+                        titulo=dados_ia.titulo or consulta.titulo or caminho.stem,
+                        artista=(dados_ia.artista or consulta.artista
+                                 or limpar_nome_canal(canal)),
+                        fonte="ia",
+                        confianca=0.0)
+                    campos_da_ia = [campo for campo in
+                                    ("titulo", "artista") if getattr(dados_ia, campo)]
+                from identificacao_ia import aplicar_na_info
+
+                campos_da_ia.extend(aplicar_na_info(info, dados_ia))
+                campos_da_ia = sorted(set(campos_da_ia))
 
         if info is None:
             # Sem confirmação externa: grava os dados do próprio vídeo, que são
@@ -234,12 +279,26 @@ class ProcessadorMusical:
             "titulo": info.titulo, "artista": info.artista, "album": info.album,
             "ano": info.ano, "genero": info.genero, "fonte": info.fonte,
             "confianca": info.confianca, "capa_incorporada": capa is not None,
-            "identificado": info.fonte not in {"nome_do_arquivo",
-                                               "resultado_da_pesquisa"},
+            # "Identificado" só quando veio de fonte EXTERNA (API ou IA): os
+            # dados do próprio vídeo e os da IA não podem se passar por
+            # confirmação de API — a interface diz de onde veio cada campo.
+            "identificado": info.fonte not in {
+                "nome_do_arquivo", "resultado_da_pesquisa"} and "ia" not in info.fonte,
+            "confirmado_por_api": info.fonte not in {
+                "nome_do_arquivo", "resultado_da_pesquisa", "ia"}
+                and "ia" not in info.fonte,
+            "campos_da_ia": list(campos_da_ia),
+            "erro_ia": self.ultimo_erro_ia,
         }
         # Relato honesto do que aconteceu, para a interface e o histórico:
         # campos confirmados por API, campos que vieram só do vídeo, e quais
         # provedores falharam (rede bloqueada, API fora do ar, sem chave).
+        # Distingue "a IA respondeu os 6 campos" de "só completou lacunas":
+        # a interface e o histórico precisam dizer a verdade sobre a origem.
+        preenchidos_pela_ia = sorted(set(campos_da_ia))
+        self.ultimo_resumo["ia_usada"] = bool(preenchidos_pela_ia)
+        if preenchidos_pela_ia:
+            self.ultimo_resumo["fonte"] = info.fonte
         erros = list(getattr(self.identificador, "ultimos_erros", []) or [])
         self.ultimo_resumo["provedores_com_erro"] = erros
         self.ultimo_resumo["campos_confirmados"] = [

@@ -287,3 +287,36 @@ depois. A prévia resolve na seleção, não no arrependimento.
 - Estado final verificado: tags corretas vindas do vídeo
   (`titulo=Tempo Perdido`, `artista=Legiao Urbana`), capa ausente por falta de
   fonte, e relato dizendo isso — sem inventar álbum/ano/gênero.
+
+## 2026-11-17 — Chave de IA por arquivo + identificação em 6 campos
+
+### Método
+- `api_ia.py` segue o desenho de `cookies_youtube.py`: validar → copiar para a
+  pasta de dados com permissão restrita → usar. Nada de segredo em log.
+- `identificacao_ia.py` separa três responsabilidades: montar o prompt do
+  usuário, interpretar a resposta e aplicar os campos respeitando prioridade.
+- Validação real: servidor HTTP local imitando `chat/completions` (chave válida
+  e inválida). Permitou verificar o corpo enviado (`/tmp/ultimo_prompt.txt`,
+  4428 bytes com a lista de gêneros), a tradução de 401 e o preenchimento das
+  tags em MP3 real com Mutagen.
+
+### Decisões
+- **Arquivo escolhido é copiado como `api.txt`**, não com o nome original: o
+  programa sempre sabe onde procurar. A interface avisa quando houve renomeação.
+- **A cópia guarda só a chave** (uma linha), não o arquivo inteiro: evita levar
+  junto comentários e lixo do export.
+- **Importar já testa**: formato válido não garante chave ativa. O usuário vê
+  "validada" ou o motivo da recusa no mesmo clique.
+- **IA nunca sobrescreve API** e nunca se apresenta como confirmação de API: o
+  resumo ganhou `confirmado_por_api` separado de `identificado`.
+- **Falha da IA nunca derruba o download**: `IdentificadorIA` devolve `None` e
+  registra `ultimo_erro`, que aparece no relato final.
+
+### Defeitos corrigidos durante a validação
+1. `fonte` saía `"ia+ia"` (aplicação dupla) → passou a checar antes de anexar.
+2. Relato dizia "confirmado pelas APIs" com todas as APIs fora → separado em
+   `confirmado_por_api`.
+3. `patch` do teste saía de escopo antes de `processar_mp3` (teste falso-verde
+   corrigido para dentro do `with`).
+4. `AdaptadorMetadados` não passava a configuração do núcleo ao processador —
+   sem ela o `api.txt` da pasta de dados não era encontrado.

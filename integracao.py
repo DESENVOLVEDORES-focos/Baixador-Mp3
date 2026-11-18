@@ -20,7 +20,9 @@ class ProcessadorMetadados(Protocol):
 class AdaptadorMetadados:
     """Carrega opcionalmente o módulo indicado por ``BAIXADOR_METADATA_MODULE``."""
 
-    def __init__(self, processador: ProcessadorMetadados | None = None):
+    def __init__(self, processador: ProcessadorMetadados | None = None,
+                 configuracoes: object | None = None):
+        self._configuracoes = configuracoes
         self._processador = processador or self._carregar_configurado()
 
     @property
@@ -50,8 +52,7 @@ class AdaptadorMetadados:
             raise RuntimeError(f"O processador de metadados não produziu um MP3 válido: {final}")
         return final
 
-    @staticmethod
-    def _carregar_configurado() -> ProcessadorMetadados | None:
+    def _carregar_configurado(self) -> ProcessadorMetadados | None:
         nome_modulo = os.environ.get("BAIXADOR_METADATA_MODULE", "").strip()
         if not nome_modulo:
             return None
@@ -73,9 +74,22 @@ class AdaptadorMetadados:
                 # usá-lo evita recriar cliente HTTP e perder o relato.
                 self.real = interno() if callable(interno) else None
 
+            def ligar_config(self, config: object | None) -> None:
+                """Passa a configuração do núcleo ao processador real.
+
+                Ele precisa dela para achar a chave em ``<dados>/api.txt``.
+                """
+                if self.real is not None and config is not None:
+                    try:
+                        self.real._config_nucleo = config
+                    except Exception:
+                        pass
+
             def processar_mp3(self, caminho: Path, metadados: Mapping[str, Any]) -> Path | None:
                 if self.real is not None:
                     return self.real.processar_mp3(caminho, metadados)
                 return funcao(caminho, metadados)
 
-        return _AdaptadorFuncao()
+        adaptador = _AdaptadorFuncao()
+        adaptador.ligar_config(self._configuracoes)
+        return adaptador

@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026-11-17 — Chave de IA por arquivo (api.txt) e identificação com 6 campos
+
+Pedido do usuário: poder colocar a chave de API por **arquivo**, como já acontece
+com o `cookies.txt`, e usar o prompt de identificação/catalogação musical para
+preencher título, artista, álbum, ano, gênero e número da faixa.
+
+### Novo: chave por arquivo (`api_ia.py`)
+
+- Aba **Configurações → "CHAVE DE IA POR ARQUIVO (api.txt)"**, com
+  **Selecionar arquivo da chave...**, **Testar chave** e **Remover**.
+- **Aceita qualquer nome de arquivo.** O conteúdo pode ser a chave sozinha
+  (`sk-...`), `api_key=sk-...`, `OPENAI_API_KEY: ...`, `export ...`,
+  `.env`, JSON (`{"api_key": "..."}`) ou linha com comentário `#`.
+- Valida **antes de copiar**: texto sem chave reconhecível é recusado com
+  mensagem clara (não vira lixo no disco). `api.txt` grande demais também.
+- Guarda **cópia gerenciada** em `.baixador\api.txt` com permissão 0600,
+  contendo **somente a chave** — comentários e restos do arquivo ficam fora.
+- A cópia é sempre `api.txt`: se você escolheu `minha chave.txt`, a interface
+  informa que foi **renomeada** para `api.txt`.
+- Também funciona se você simplesmente deixar o `api.txt` na pasta do programa.
+- **Ao importar, a chave é testada de verdade** na API (chamada mínima) e o
+  resultado aparece na hora: válida, 401 (chave recusada), 429 (sem créditos),
+  403, modelo inexistente ou falha de rede — sempre em português.
+- Nada de segredo em log: registra apenas provedor e máscara
+  (`••••••••abcd`). `api.txt` e variações estão no `.gitignore`.
+
+### Novo: identificação musical com os 6 campos (`identificacao_ia.py`)
+
+- Prompt completo de **identificação e classificação musical**, com as regras de
+  pesquisa/precisão e a **lista de referência de gêneros** (todas as famílias e
+  subgêneros pedidos: rock, metal, pop, eletrônica, hip-hop, R&B/soul, blues,
+  jazz, folk/country, reggae, latina/brasileira, clássica, outros).
+- Resposta em JSON é lida campo a campo: `"Não identificado"` vira campo vazio
+  (nunca tag inventada); ano e faixa são validados; gênero é normalizado para o
+  nome canônico quando reconhecível, com no máximo 3 itens ("sem exagerar").
+- **Prioridade preservada**: o que iTunes/MusicBrainz/Deezer confirmaram nunca é
+  sobrescrito — a IA só preenche lacunas.
+- **O que a IA preencheu é dito na tela**: *"Preenchido pela IA de identificação
+  (chave em api.txt): album, ano, artista, faixa, genero, titulo."*, e o relato
+  separa "confirmado por API" de "vindo da IA" — nada de a IA se passar por API.
+- Botão **"Dados musicais (IA)"** na aba Prévia mostra os seis campos na ordem
+  pedida (Título, Artista, Álbum, Ano, Gênero, Número da faixa).
+
+### Testes
+
+- `tests/test_api_ia.py`: 28 testes (formatos de chave, renomeação, arquivo
+  inválido, status, remoção, mascaramento, prompt com os 6 campos e a lista de
+  gêneros, parsing do JSON, erros 401/rede, prioridade API > IA e gravação real
+  das tags em MP3).
+- Suíte completa: **191 passed, 1 skipped**; `pyflakes` limpo.
+- Validação real com servidor local imitando a API: importar arquivo de nome
+  diferente → cópia vira `api.txt` → chave testada → MP3 recebe
+  `Dois / 1986 / Rock, Pós-Punk, MPB / faixa 2`.
+
 ## 2026-11-17 — Prévia antes de baixar (evitar show), nomes longos e erros em português
 
 Pedido do usuário: muitas músicas estão em **shows/ao vivo** e só se percebe

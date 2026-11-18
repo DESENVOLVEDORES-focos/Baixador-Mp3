@@ -209,8 +209,18 @@ def aplicar_ao_ambiente(prefs: Preferencias) -> None:
     ``BAIXADOR_METADATA_MODULE``. Segredos vão só para o ambiente do
     processo — nunca para arquivos, logs ou rede além do serviço da IA.
     """
-    if prefs.ia_api_key:
-        os.environ["BAIXADOR_IA_API_KEY"] = prefs.ia_api_key
+    chave = prefs.ia_api_key
+    if not chave:
+        # Chave importada como arquivo (api.txt), no mesmo espírito do
+        # cookies.txt: vale sem o usuário digitar nada.
+        try:
+            import api_ia
+
+            chave = api_ia.ler_chave()
+        except Exception:
+            chave = ""
+    if chave:
+        os.environ["BAIXADOR_IA_API_KEY"] = chave
     else:
         os.environ.pop("BAIXADOR_IA_API_KEY", None)
     os.environ["BAIXADOR_IA_MODELO"] = prefs.ia_modelo or IA_MODELO_PADRAO

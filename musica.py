@@ -42,7 +42,7 @@ class Aplicacao:
         self.pesquisador = Pesquisador(configuracoes)
         self.fila = FilaDownloads(configuracoes)
         self.historico = Historico(configuracoes)
-        self.metadados = AdaptadorMetadados()
+        self.metadados = AdaptadorMetadados(configuracoes=configuracoes)
         self.previa = Previa(configuracoes)
         # Última classificação de erro (a interface usa para a dica contextual)
         # e último arquivo publicado (para exibir/abrir a pasta).
@@ -154,12 +154,19 @@ class Aplicacao:
         confirmados = resumo.get("campos_confirmados") or []
         erros = resumo.get("provedores_com_erro") or []
         identificado = bool(resumo.get("identificado"))
+        da_ia = resumo.get("campos_da_ia") or []
+        erro_ia = str(resumo.get("erro_ia") or "").strip()
         partes: list[str] = []
-        if identificado:
+        if da_ia and "ia" in str(resumo.get("fonte") or ""):
+            partes.append(
+                "Preenchido pela IA de identificação (chave em api.txt): "
+                + ", ".join(da_ia) + ".")
+        confirmado_api = bool(resumo.get("confirmado_por_api", identificado))
+        if confirmado_api:
             if confirmados:
                 partes.append("Identificado: " + ", ".join(confirmados)
                               + " confirmado(s) pelas APIs de música.")
-        else:
+        elif not da_ia:
             partes.append(
                 "Não confirmado pelas APIs de música: as tags usam apenas o "
                 "título e o canal do vídeo.")
@@ -169,6 +176,8 @@ class Aplicacao:
             partes.append("Sem capa: nenhuma fonte confiável devolveu imagem.")
         if erros:
             partes.append("APIs indisponíveis: " + "; ".join(erros) + ".")
+        if erro_ia:
+            partes.append("IA não usada: " + erro_ia)
         return " ".join(partes)
 
     # -- pré-visualização ---------------------------------------------------

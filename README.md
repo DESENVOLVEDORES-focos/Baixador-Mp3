@@ -50,9 +50,16 @@ download:
 
 ### Configurações (aba própria)
 
-- **APIs**: chave de IA externa (opcional, protegida pelo Windows/DPAPI) e teste
-  de conexão dos serviços públicos de música (iTunes, MusicBrainz, Deezer —
-  funcionam sem chave).
+- **APIs**: chave de IA externa — pode ser **importada de um arquivo**
+  (qualquer nome: `api.txt`, `chave.txt`, …), validada, guardada como
+  `.baixador\api.txt` e testada na hora. Sem chave, a identificação continua
+  funcionando com as APIs públicas. Também há o campo para digitar a chave
+  (protegida pelo Windows/DPAPI) e teste de conexão de iTunes, MusicBrainz e
+  Deezer (públicas, sem chave).
+- **Identificação com IA (opcional)**: com a chave importada, a IA responde
+  **Título, Artista, Álbum, Ano, Gênero e Número da faixa** seguindo as regras de
+  classificação musical (a lista de gêneros de referência vai no prompt). Ela só
+  completa o que as APIs não confirmaram — nunca sobrescreve fato confirmado.
 - **Cookies do YouTube**: importe seu `cookies.txt` (formato Netscape). Ele é
   validado, copiado para `.baixador\cookies.txt` e usado automaticamente pelo
   yt-dlp em pesquisas e downloads, sem pedir de novo. Nunca é enviado a
@@ -79,6 +86,9 @@ python musica.py queue-add "https://..." --formato mp3
 python musica.py worker
 python musica.py gui
 ```
+
+O arquivo com a chave de IA também é aceito como `api.txt` na pasta do programa
+(mesmo esquema do `cookies.txt`). Ele nunca é versionado: está no `.gitignore`.
 
 A CLI mostra o progresso em tempo real no `stderr`; falhas aparecem como
 mensagem clara (`[ERRO] ERROR: ...`) e nunca como traceback.

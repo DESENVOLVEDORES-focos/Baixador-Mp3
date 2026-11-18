@@ -87,6 +87,47 @@ class ControladorInterface:
     def pasta_dados(self) -> Path:
         return self.config.dados
 
+    # -- chave de IA por arquivo (api.txt) ----------------------------------
+    def importar_chave(self, origem: Any):
+        """Valida o arquivo escolhido, guarda a cópia e ativa a chave."""
+        import api_ia
+
+        info = api_ia.importar(origem, self.config)
+        # Passa a valer já nesta sessão, sem reabrir o programa.
+        os.environ["BAIXADOR_IA_API_KEY"] = api_ia.ler_chave(self.config)
+        self.preferencias = replace(self.preferencias, ia_api_key="")
+        return info
+
+    def status_chave(self):
+        import api_ia
+
+        return api_ia.status(self.config)
+
+    def remover_chave(self) -> bool:
+        import api_ia
+
+        removeu = api_ia.remover(self.config)
+        if not self.preferencias.ia_api_key:
+            os.environ.pop("BAIXADOR_IA_API_KEY", None)
+        return removeu
+
+    def testar_chave(self) -> tuple[bool, str]:
+        """Chamada mínima à API para confirmar que a chave funciona."""
+        import api_ia
+        from identificacao_ia import IdentificadorIA
+
+        chave = api_ia.ler_chave(self.config)
+        if not chave:
+            return False, ("Nenhuma chave configurada: importe o api.txt "
+                           "em Configurações.")
+        return IdentificadorIA(api_key=chave, config=self.config).testar_conexao()
+
+    def identificar_com_ia(self, consulta: str, canal: str = ""):
+        """Usa o prompt de identificação/catalogação (6 campos)."""
+        from identificacao_ia import IdentificadorIA
+
+        return IdentificadorIA(config=self.config).identificar(consulta, canal)
+
     # -- pré-visualização (ouvir antes de baixar) ---------------------------
     def inspecionar(self, url: str):
         """Dados do vídeo + indícios de ao vivo/show, sem baixar mídia."""
@@ -823,6 +864,11 @@ class AplicativoGrafico:
                    command=self._ao_parar_previa).pack(side="left")
         ttk.Button(acoes, text="Baixar este vídeo",
                    command=self._ao_baixar_previa).pack(side="left", padx=6)
+        ttk.Button(acoes, text="Dados musicais (IA)",
+                   command=self._ao_identificar_ia).pack(side="left", padx=6)
+        self.ia_resultado_var = tk.StringVar(value="")
+        ttk.Label(aba, textvariable=self.ia_resultado_var, wraplength=900,
+                  justify="left").pack(anchor="w", padx=8, pady=(0, 8))
         self.previa_trecho_var = tk.StringVar(value="")
         ttk.Label(aba, textvariable=self.previa_trecho_var).pack(
             anchor="w", padx=8, pady=(0, 8))
@@ -908,6 +954,43 @@ class AplicativoGrafico:
             self._previa_pasta = None
             self.previa_trecho_var.set("Trecho apagado.")
 
+    def _ao_identificar_ia(self) -> None:
+        """Identifica título/artista/álbum/ano/gênero/faixa (6 campos)."""
+        url = self._url_da_previa()
+        if not url:
+            return
+        texto = self.previa_info_var.get().strip()
+        consulta = texto.splitlines()[0] if texto else url
+        canal = ""
+        for linha in texto.splitlines():
+            if linha.startswith("Canal:"):
+                canal = linha.split("|")[0].replace("Canal:", "").strip()
+                break
+        self.ia_resultado_var.set("Consultando a IA de identificação...")
+
+        def concluir(identificacao: Any) -> None:
+            from identificacao_ia import IdentificadorIA
+
+            if identificacao is None:
+                erro = ""
+                try:
+                    erro = IdentificadorIA(config=self.controlador.config).ultimo_erro
+                except Exception:
+                    pass
+                self.ia_resultado_var.set(
+                    "Sem dados musicais. " + (erro or
+                    "Configure a chave em Configurações (api.txt) para a IA "
+                    "preencher álbum, ano, gênero e faixa."))
+                return
+            linhas = [f"{rotulo}: {valor}"
+                      for rotulo, valor in identificacao.como_linhas()]
+            self.ia_resultado_var.set("\n".join(linhas))
+            self._registrar("IA: dados musicais de \"" + consulta + "\".")
+
+        self._executar(
+            lambda: self.controlador.identificar_com_ia(consulta, canal),
+            concluir)
+
     def _ao_baixar_previa(self) -> None:
         url = self._url_da_previa()
         if not url:
@@ -928,6 +1011,90 @@ class AplicativoGrafico:
                 os.system(f'xdg-open "{caminho}" >/dev/null 2>&1 &')
         except Exception as erro:
             messagebox.showerror("Prévia", f"Não foi possível abrir o trecho: {erro}")
+
+    # -- chave de IA por arquivo --------------------------------------------
+    def _atualizar_status_chave(self) -> None:
+        try:
+            info = self.controlador.status_chave()
+        except Exception as erro:
+            self.chave_status_var.set(f"Erro ao verificar a chave: {erro}")
+            return
+        if not info.configurada:
+            self.chave_status_var.set(
+                "Nenhuma chave configurada — a identificação usa só as APIs "
+                "públicas (iTunes/Deezer/MusicBrainz), sem gênero por IA.")
+            self.chave_botao_var.set("Selecionar arquivo da chave...")
+            return
+        self.chave_botao_var.set("Substituir arquivo da chave...")
+        onde = f" — {info.caminho}" if info.caminho else ""
+        self.chave_status_var.set(
+            f"Configurada: {info.mascarada} (provedor: {info.provedor})"
+            f"{onde}. Clique em \"Testar chave\" para confirmar que funciona.")
+
+    def _ao_importar_chave(self) -> None:
+        from api_ia import ErroChave
+
+        caminho = filedialog.askopenfilename(
+            title="Selecione o arquivo com a chave de API",
+            filetypes=(("Texto", "*.txt *.env"), ("Todos", "*.*")))
+        if not caminho:
+            return
+        try:
+            info = self.controlador.importar_chave(caminho)
+        except ErroChave as erro:
+            messagebox.showerror("Chave de IA", str(erro))
+            self._atualizar_status_chave()
+            return
+        self._atualizar_status_chave()
+        renomeado = ""
+        if getattr(info, "renomeado", False):
+            renomeado = (f"\n\nO arquivo {info.nome_original} foi renomeado "
+                         "para api.txt na cópia gerenciada.")
+        self._registrar(
+            f"Chave de IA importada ({info.provedor}, {info.mascarada}).")
+        # Valida de verdade na hora: formato bom não garante chave ativa.
+        ok, mensagem = self.controlador.testar_chave()
+        if ok:
+            messagebox.showinfo(
+                "Chave de IA",
+                f"Chave importada de {Path(caminho).name} e validada.\n\n"
+                f"{mensagem}{renomeado}")
+        else:
+            messagebox.showwarning(
+                "Chave de IA",
+                f"Chave importada de {Path(caminho).name}, mas a API recusou:"
+                f"\n\n{mensagem}{renomeado}")
+        self._registrar(f"Teste da chave: {'OK' if ok else 'falhou'}.")
+
+    def _ao_testar_chave(self) -> None:
+        self.chave_status_var.set("Testando a chave com a API...")
+        self._executar(
+            self.controlador.testar_chave,
+            lambda resultado: self._mostrar_resultado_chave(resultado))
+
+    def _mostrar_resultado_chave(self, resultado: Any) -> None:
+        ok, mensagem = resultado
+        self._atualizar_status_chave()
+        if ok:
+            self._registrar(f"Chave de IA: {mensagem}")
+            messagebox.showinfo("Chave de IA", mensagem)
+        else:
+            self._registrar(f"[ERRO] Chave de IA: {mensagem}")
+            messagebox.showerror("Chave de IA", mensagem)
+
+    def _ao_remover_chave(self) -> None:
+        if not messagebox.askyesno(
+                "Chave de IA",
+                "Remover a chave guardada? A identificação volta a usar apenas "
+                "as APIs públicas."):
+            return
+        try:
+            self.controlador.remover_chave()
+        except Exception as erro:
+            messagebox.showerror("Chave de IA", str(erro))
+            return
+        self._atualizar_status_chave()
+        self._registrar("Chave de IA removida.")
 
     def _ao_previas_selecionado(self) -> None:
         """Leva o resultado selecionado para a aba Prévia e confere os dados."""
@@ -981,6 +1148,32 @@ class AplicativoGrafico:
             row=4, column=1, sticky="w", pady=2)
         ttk.Button(apis, text="Testar conexão", command=self._ao_testar_ia).grid(
             row=4, column=2, padx=4, pady=2)
+
+        # Chave por arquivo (api.txt) — mesmo padrão do cookies.txt -----------
+        chave_arquivo = ttk.LabelFrame(
+            quadro, text="CONFIGURAÇÕES — CHAVE DE IA POR ARQUIVO (api.txt)")
+        chave_arquivo.pack(fill="x", padx=8, pady=4)
+        ttk.Label(chave_arquivo, text=(
+            "Escolha o arquivo com a sua chave de API (pode ter qualquer nome: "
+            "api.txt, chave.txt, anotacao.txt). O conteúdo pode ser a chave "
+            "sozinha (sk-...) ou uma linha como api_key=sk-.... O programa "
+            "valida, guarda uma cópia em .baixador\\api.txt (fora do Git, "
+            "permissão restrita) e renomeia a cópia para api.txt. A chave nunca "
+            "aparece em log nem na tela."), wraplength=900,
+            justify="left").pack(anchor="w", padx=6, pady=6)
+        self.chave_status_var = tk.StringVar()
+        ttk.Label(chave_arquivo, textvariable=self.chave_status_var).pack(
+            anchor="w", padx=6)
+        botoes_chave = ttk.Frame(chave_arquivo)
+        botoes_chave.pack(fill="x", padx=6, pady=6)
+        self.chave_botao_var = tk.StringVar(value="Selecionar arquivo da chave...")
+        ttk.Button(botoes_chave, textvariable=self.chave_botao_var,
+                   command=self._ao_importar_chave).pack(side="left")
+        ttk.Button(botoes_chave, text="Testar chave",
+                   command=self._ao_testar_chave).pack(side="left", padx=6)
+        ttk.Button(botoes_chave, text="Remover",
+                   command=self._ao_remover_chave).pack(side="left")
+        self._atualizar_status_chave()
 
         ttk.Label(apis, text="Identificação musical (APIs públicas — funcionam SEM chave):").grid(
             row=5, column=0, columnspan=4, sticky="w", padx=6, pady=(10, 2))

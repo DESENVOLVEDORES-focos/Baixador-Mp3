@@ -14,6 +14,11 @@ ferramentas/ffprobe.exe
 ferramentas/yt-dlp
 ferramentas/ffmpeg
 cookies.txt
+# Chave de IA importada por arquivo (nunca commitar)
+api.txt
+**/api.txt
+api_key.txt
+chave.txt
 *.part
 *.ytdl
 # Etapa 3: credenciais e preferencias locais (nunca commitar)
