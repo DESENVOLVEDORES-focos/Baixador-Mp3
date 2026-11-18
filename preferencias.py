@@ -151,6 +151,11 @@ class Preferencias:
     pasta_biblioteca: str = ""                 # vazio = Musicas/ do núcleo
     sincronizar_ao_abrir: bool = True          # indexar a pasta ao abrir o app
     normalizar_volume: bool = False            # loudnorm no MP3 final (FFmpeg)
+    # Teto de duração por música (minutos). 0 = sem limite. Vale para pesquisa,
+    # playlist aberta e cesta: o item acima do teto aparece marcado e desmarcado
+    # com o motivo, nunca desaparece sem explicação.
+    duracao_maxima_min: int = 0
+    filtrar_ao_vivo: bool = True                # desmarcar show/ao vivo ao listar
     verificar_audio: bool = True               # confere o MP3 antes de "concluído"
     notificacoes: bool = True
     volume_reprodutor: int = 80
@@ -173,6 +178,9 @@ class Preferencias:
             raise ValueError("Downloads simultâneos deve estar entre 1 e 4.")
         if not 0 <= int(self.volume_reprodutor) <= 100:
             raise ValueError("Volume deve estar entre 0 e 100.")
+        if not 0 <= int(self.duracao_maxima_min) <= 600:
+            raise ValueError(
+                "Teto de duração deve estar entre 0 (sem limite) e 600 minutos.")
         qualidade = str(self.qualidade_mp3).strip()
         if not (qualidade.isdigit() and 0 <= int(qualidade) <= 10) \
                 and not (qualidade.upper().endswith("K") and qualidade[:-1].isdigit()):
@@ -271,6 +279,7 @@ def derivar_configuracoes(prefs: Preferencias,
         # Pós-processamento de áudio: aplicado ao arquivo publicado, com o
         # FFmpeg que o programa já usa (nada de dependência nova).
         normalizar_volume=bool(getattr(prefs, "normalizar_volume", False)),
+        duracao_maxima_min=int(getattr(prefs, "duracao_maxima_min", 0) or 0),
         verificar_audio=bool(getattr(prefs, "verificar_audio", True)),
         # "perguntar" é resolvido na interface; no núcleo o padrão seguro é
         # não sobrescrever (a pergunta acontece antes de baixar).

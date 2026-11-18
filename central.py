@@ -143,6 +143,18 @@ class Central(ServicosBase):
     def listar_playlist(self, url: str, limite: int = 200) -> Playlist:
         return listar_playlist(url, limite=limite, config=self.config)
 
+    # -- regras de seleção (teto de duração / ao vivo) ----------------------
+    def avaliar_itens(self, itens: Iterable[Any]) -> list[tuple[Any, Any]]:
+        """Aplica o teto de duração e o filtro de ao vivo a uma lista de itens."""
+        from limites import filtrar
+
+        return filtrar(
+            itens,
+            duracao_maxima_min=int(getattr(self.preferencias,
+                                           "duracao_maxima_min", 0) or 0),
+            filtrar_ao_vivo=bool(getattr(self.preferencias,
+                                        "filtrar_ao_vivo", True)))
+
     def listar_mais_playlist(self, playlist: Playlist,
                              quantidade: int = 200) -> Playlist:
         """Próxima janela de uma playlist/canal longo (botão "Listar mais")."""

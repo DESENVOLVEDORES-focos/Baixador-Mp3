@@ -576,7 +576,10 @@ class CentralApp:
         cesta.pack(fill="both", expand=False, pady=(8, 0))
         self.cesta_var = tk.StringVar(value="Cesta vazia.")
         ttk.Label(cesta, textvariable=self.cesta_var,
-                  style="Forte.TLabel").pack(anchor="w", padx=8, pady=4)
+                  style="Forte.TLabel").pack(anchor="w", padx=8, pady=(4, 0))
+        self.cesta_estimativa_var = tk.StringVar(value="")
+        ttk.Label(cesta, textvariable=self.cesta_estimativa_var,
+                  style="Fraco.TLabel").pack(anchor="w", padx=8, pady=(0, 4))
         self.arvore_cesta = ttk.Treeview(
             cesta, columns=("titulo", "origem", "duracao", "formato"),
             show="headings", height=6, selectmode="extended")
@@ -599,6 +602,14 @@ class CentralApp:
                    command=lambda: self._mover_cesta(-1)).pack(side="left", padx=(6, 0))
         ttk.Button(acoes_cesta, text="Descer",
                    command=lambda: self._mover_cesta(1)).pack(side="left", padx=4)
+        ttk.Button(acoes_cesta, text="↥ Topo",
+                   command=lambda: self._cesta_para(0)).pack(side="left", padx=4)
+        ttk.Button(acoes_cesta, text="↧ Fim",
+                   command=lambda: self._cesta_para(-1)).pack(side="left")
+        ttk.Button(acoes_cesta, text="↶ Desfazer remoção",
+                   command=self._desfazer_remocao_cesta).pack(side="left", padx=4)
+        ttk.Button(acoes_cesta, text="Salvar cesta como playlist",
+                   command=self._salvar_cesta_como_playlist).pack(side="left")
 
     def _iniciar_downloads(self) -> None:
         quantidade = self.central.iniciar_downloads()
@@ -703,6 +714,56 @@ class CentralApp:
         self._atualizar_fila()
         self.definir_status(f"{removidos} item(ns) removido(s) da cesta.")
 
+    def _cesta_para(self, destino: int) -> None:
+        """Manda o item marcado para o topo (0) ou para o fim (-1)."""
+        escolhas = self.arvore_cesta.selection()
+        if not escolhas:
+            messagebox.showinfo("Cesta", "Marque um item da cesta.")
+            return
+        indice = int(str(escolhas[0]))
+        if self.central.selecao.mover_para(indice, destino):
+            self._atualizar_fila()
+            novo = 0 if destino == 0 else self.central.selecao.quantidade() - 1
+            self.arvore_cesta.selection_set(str(novo))
+            self.definir_status("Item movido " + ("para o topo." if destino == 0
+                                                  else "para o fim."))
+
+    def _desfazer_remocao_cesta(self) -> None:
+        devolvidos = self.central.selecao.desfazer_remocao()
+        self._atualizar_fila()
+        self.definir_status(
+            f"{devolvidos} item(ns) devolvido(s) à cesta." if devolvidos
+            else "Nada para desfazer.")
+
+    def _salvar_cesta_como_playlist(self) -> None:
+        itens = self.central.selecao.listar()
+        if not itens:
+            messagebox.showinfo("Cesta", "A cesta está vazia.")
+            return
+        nome = simpledialog.askstring(
+            "Salvar cesta", "Nome da playlist local:",
+            initialvalue="Minha seleção", parent=self.raiz)
+        if not nome or not str(nome).strip():
+            return
+        na_biblioteca = {m.origem_url: m.id
+                         for m in self.central.biblioteca.listar()
+                         if m.origem_url}
+        ids = [na_biblioteca[item.url] for item in itens
+               if item.url in na_biblioteca]
+        if not ids:
+            self.notificar(
+                "Playlist", "Nenhum item da cesta já está na biblioteca: baixe "
+                            "antes de salvar (playlist só guarda músicas baixadas).",
+                erro=True)
+            return
+        playlist = self.central.criar_playlist(str(nome).strip())
+        adicionadas = self.central.adicionar_a_playlist(playlist, ids)
+        self.definir_status(
+            f"Playlist \"{nome}\" criada com {adicionadas} música(s)"
+            + (f"; {len(itens) - len(ids)} item(ns) ainda não baixado(s) ficaram fora."
+               if len(ids) < len(itens) else "."))
+        self._atualizar_fila()
+
     def _mover_cesta(self, direcao: int) -> None:
         escolhas = self.arvore_cesta.selection()
         if not escolhas:
@@ -748,6 +809,15 @@ class CentralApp:
                 entrada.duracao_formatada, entrada.formato.upper()))
         grupos = self.central.selecao.agrupado_por_origem()
         resumo_cesta = ", ".join(f"{nome}: {qtd}" for nome, qtd in grupos.items())
+        segundos, bytes_ = self.central.selecao.estimativa()
+        from limites import tamanho_legivel, tempo_legivel
+
+        repetidas = len(self.central.selecao.ja_na_biblioteca(
+            self.central.biblioteca))
+        self.cesta_estimativa_var.set(
+            f"Estimativa: {tempo_legivel(segundos)} de áudio, "
+            f"~{tamanho_legivel(bytes_)} de download"
+            + (f" · {repetidas} já na biblioteca" if repetidas else ""))
         self.cesta_var.set(
             (f"Cesta: {len(itens)} música(s) · "
              f"{self.central.selecao.duracao_formatada()}"
@@ -1240,11 +1310,12 @@ class CentralApp:
         ttk.Button(linha, text="Listar mais",
                    command=self._listar_mais_itens).pack(side="right", padx=4)
         self.arvore_playlist = ttk.Treeview(
-            quadro, columns=("n", "titulo", "duracao", "situacao"),
+            quadro, columns=("n", "titulo", "duracao", "situacao", "observacao"),
             show="headings", height=7, selectmode="extended")
-        for coluna, titulo, largura in (("n", "#", 40), ("titulo", "Título", 420),
+        for coluna, titulo, largura in (("n", "#", 40), ("titulo", "Título", 380),
                                         ("duracao", "Duração", 90),
-                                        ("situacao", "Situação", 150)):
+                                        ("situacao", "Situação", 130),
+                                        ("observacao", "Fora do filtro", 220)):
             self.arvore_playlist.heading(coluna, text=titulo)
             self.arvore_playlist.column(coluna, width=largura)
         self.arvore_playlist.pack(fill="both", expand=True, padx=6, pady=(0, 6))
@@ -1340,14 +1411,32 @@ class CentralApp:
             self._playlist_aberta = playlist
             for item in self.arvore_playlist.get_children():
                 self.arvore_playlist.delete(item)
-            for item in playlist.itens:
-                self.arvore_playlist.insert("", "end", iid=str(item.indice), values=(
-                    item.indice, item.titulo, item.duracao_formatada,
-                    "disponível" if item.disponivel else "privado/removido"))
+            self._preencher_playlist(playlist)
             self._mostrar_titulo_playlist(playlist)
             self.definir_status(f"Playlist listada: {playlist.quantidade} item(ns).")
 
         self._executar(lambda: self.central.listar_playlist(resultado.url), concluir)
+
+    def _preencher_playlist(self, playlist: Any) -> None:
+        """Insere os itens e já marca os que passam no teto/ao vivo."""
+        for item in self.arvore_playlist.get_children():
+            self.arvore_playlist.delete(item)
+        avaliados = self.central.avaliar_itens(playlist.itens)
+        aprovados = []
+        for item, avaliacao in avaliados:
+            self.arvore_playlist.insert("", "end", iid=str(item.indice), values=(
+                item.indice, item.titulo, item.duracao_formatada,
+                "disponível" if item.disponivel else "privado/removido",
+                avaliacao.motivo or ("" if item.disponivel else "indisponível")))
+            if item.disponivel and avaliacao.marcar:
+                aprovados.append(str(item.indice))
+        if aprovados:
+            self.arvore_playlist.selection_set(aprovados)
+        fora = len(playlist.itens) - len(aprovados)
+        if fora:
+            self.definir_status(
+                f"{len(aprovados)} de {len(playlist.itens)} marcada(s); "
+                f"{fora} fora do filtro (veja a coluna 'Fora do filtro').")
 
     def _mostrar_titulo_playlist(self, playlist: Any) -> None:
         """Título honesto: quantos itens estão na tela e quantos existem."""
@@ -1376,10 +1465,7 @@ class CentralApp:
             self._playlist_aberta = nova
             for item in self.arvore_playlist.get_children():
                 self.arvore_playlist.delete(item)
-            for item in nova.itens:
-                self.arvore_playlist.insert("", "end", iid=str(item.indice), values=(
-                    item.indice, item.titulo, item.duracao_formatada,
-                    "disponível" if item.disponivel else "privado/removido"))
+            self._preencher_playlist(nova)
             # a marcação anterior continua válida (o número do item não muda)
             if marcados:
                 self.arvore_playlist.selection_set(
@@ -1883,6 +1969,20 @@ class CentralApp:
         ttk.Checkbutton(audio,
                         text="Verificar o MP3 antes de marcar como concluído",
                         variable=self.config_verificar).pack(anchor="w", padx=6, pady=2)
+        linha_teto = ttk.Frame(audio)
+        linha_teto.pack(anchor="w", fill="x", padx=6, pady=2)
+        ttk.Label(linha_teto,
+                  text="Teto de duração por música (minutos, 0 = sem limite):"
+                  ).pack(side="left")
+        self.config_teto = tk.StringVar(
+            value=str(int(getattr(prefs, "duracao_maxima_min", 0) or 0)))
+        ttk.Entry(linha_teto, textvariable=self.config_teto, width=6).pack(
+            side="left", padx=6)
+        self.config_ao_vivo = tk.BooleanVar(
+            value=bool(getattr(prefs, "filtrar_ao_vivo", True)))
+        ttk.Checkbutton(audio,
+                        text="Desmarcar automaticamente gravações ao vivo/show",
+                        variable=self.config_ao_vivo).pack(anchor="w", padx=6, pady=2)
 
         ia = ttk.Labelframe(quadro, text="INTELIGÊNCIA ARTIFICIAL (opcional)")
         ia.pack(fill="x", padx=8, pady=6)
@@ -1977,6 +2077,8 @@ class CentralApp:
                 buscar_capas=bool(self.config_capas.get()),
                 normalizar_volume=bool(self.config_normalizar.get()),
                 verificar_audio=bool(self.config_verificar.get()),
+                duracao_maxima_min=int(self.config_teto.get() or 0),
+                filtrar_ao_vivo=bool(self.config_ao_vivo.get()),
                 sincronizar_ao_abrir=bool(self.config_sincronizar.get())))
         except Exception as erro:
             self.notificar("Configurações", str(erro), erro=True)

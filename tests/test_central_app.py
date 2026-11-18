@@ -579,3 +579,107 @@ class TestListarMaisNaTela(unittest.TestCase):
     @staticmethod
     def origem_modulo():
         return TestCentralApp.modulo
+
+
+class TestCestaAvancadaNaTela(unittest.TestCase):
+    """Desfazer, topo/fim, estimativa e "salvar como playlist" pela interface."""
+
+    @classmethod
+    def setUpClass(cls):
+        TestCentralApp.setUpClass()
+        cls.app = TestCentralApp.app
+        cls.central = TestCentralApp.central
+        cls.modulo = TestCentralApp.modulo
+
+    @classmethod
+    def tearDownClass(cls):
+        TestCentralApp.tearDownClass()
+
+    def setUp(self):
+        self.central.selecao.limpar()
+        self.app.mostrar("fila")
+
+    def _encher(self, quantidade: int = 3):
+        from selecao import ItemSelecao
+
+        for numero in range(quantidade):
+            self.central.selecao.adicionar(ItemSelecao(
+                f"https://y/{numero}", f"Faixa {numero}", "Artista", 200))
+        self.app._atualizar_fila()
+
+    def test_estimativa_aparece_na_tela(self):
+        self._encher(3)
+        texto = self.app.cesta_estimativa_var.get()
+        self.assertIn("Estimativa", texto)
+        self.assertIn("download", texto)
+
+    def test_desfazer_pela_tela(self):
+        self._encher(3)
+        self.app.arvore_cesta.selection_set("1")
+        self.app._remover_da_cesta()
+        self.assertEqual(self.central.selecao.quantidade(), 2)
+        self.app._desfazer_remocao_cesta()
+        self.assertEqual(self.central.selecao.quantidade(), 3)
+        self.assertIn("devolvido", self.app.status_var.get())
+
+    def test_desfazer_sem_nada_avisa(self):
+        self._encher(2)
+        self.app._desfazer_remocao_cesta()
+        self.assertIn("Nada para desfazer", self.app.status_var.get())
+
+    def test_mover_para_o_topo_pela_tela(self):
+        self._encher(3)
+        self.app.arvore_cesta.selection_set("2")
+        self.app._cesta_para(0)
+        self.assertEqual(self.central.selecao.listar()[0].titulo, "Faixa 2")
+        self.assertIn("topo", self.app.status_var.get())
+
+    def test_mover_para_o_fim_pela_tela(self):
+        self._encher(3)
+        self.app.arvore_cesta.selection_set("0")
+        self.app._cesta_para(-1)
+        self.assertEqual(self.central.selecao.listar()[-1].titulo, "Faixa 0")
+
+    def test_cesta_vazia_nao_salva_playlist(self):
+        with patch.object(self.modulo, "messagebox") as caixa:
+            with patch.object(caixa, "showinfo") as aviso:
+                self.app._salvar_cesta_como_playlist()
+        aviso.assert_called_once()
+
+    def test_salvar_cesta_sem_musica_baixada_explica(self):
+        self._encher(2)
+        with patch.object(self.modulo.simpledialog, "askstring",
+                          return_value="Minha Lista"), \
+                patch.object(self.app, "notificar") as aviso:
+            self.app._salvar_cesta_como_playlist()
+        aviso.assert_called_once()
+        self.assertIn("baixe", aviso.call_args[0][1].lower())
+
+    def test_salvar_cesta_com_musica_na_biblioteca_cria_playlist(self):
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        ffmpeg = shutil.which("ffmpeg") or "/tmp/ff10/ffmpeg"
+        if not Path(ffmpeg).is_file():
+            self.skipTest("Sem FFmpeg")
+        pasta = self.central.config.musicas
+        pasta.mkdir(parents=True, exist_ok=True)
+        arquivo = pasta / "cesta.mp3"
+        subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi",
+                        "-i", "sine=frequency=440:duration=2",
+                        "-c:a", "libmp3lame", str(arquivo)],
+                       capture_output=True, check=False)
+        musica = self.central.biblioteca.adicionar(
+            arquivo, origem_url="https://y/0")
+        self._encher(2)
+        with patch.object(self.modulo.simpledialog, "askstring",
+                          return_value="Da cesta"):
+            self.app._salvar_cesta_como_playlist()
+        nomes = [p["nome"] for p in self.central.playlists()]
+        self.assertIn("Da cesta", nomes)
+        playlist = next(p for p in self.central.playlists()
+                        if p["nome"] == "Da cesta")
+        self.assertEqual(playlist["total"], 1)
+        self.central.excluir_playlist(playlist["id"])
+        self.central.biblioteca.remover(musica.id, apagar_arquivo=True)

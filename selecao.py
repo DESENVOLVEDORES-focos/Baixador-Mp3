@@ -77,6 +77,7 @@ class Selecao:
         self._caminho = Path(caminho) if caminho else configuracoes.dados / ARQUIVO
         self._lock = threading.RLock()
         self._itens: list[ItemSelecao] = []
+        self._removidos: list[tuple[int, ItemSelecao]] = []
         self._carregar()
 
     # -- persistência -------------------------------------------------------
@@ -173,6 +174,9 @@ class Selecao:
     def remover(self, urls: Iterable[str]) -> int:
         alvos = set(urls)
         with self._lock:
+            self._lembrar_remocao([(posicao, item)
+                                   for posicao, item in enumerate(self._itens)
+                                   if item.url in alvos])
             antes = len(self._itens)
             self._itens = [item for item in self._itens if item.url not in alvos]
             removidos = antes - len(self._itens)
@@ -183,6 +187,9 @@ class Selecao:
     def remover_indices(self, indices: Iterable[int]) -> int:
         alvos = {int(i) for i in indices}
         with self._lock:
+            self._lembrar_remocao([(posicao, item)
+                                   for posicao, item in enumerate(self._itens)
+                                   if posicao in alvos])
             restantes = [item for posicao, item in enumerate(self._itens)
                          if posicao not in alvos]
             removidos = len(self._itens) - len(restantes)
@@ -190,6 +197,10 @@ class Selecao:
             if removidos:
                 self._gravar()
             return removidos
+
+    def _lembrar_remocao(self, pares: list[tuple[int, Any]]) -> None:
+        """Guarda (posição, item) para o ``desfazer_remocao`` — só a última."""
+        self._removidos = sorted(pares, key=lambda par: par[0])
 
     def limpar(self) -> int:
         with self._lock:
@@ -222,6 +233,56 @@ class Selecao:
             if alterados:
                 self._gravar()
         return alterados
+
+    def ja_na_biblioteca(self, biblioteca: Any) -> list[Any]:
+        """Itens cuja URL de origem já está na biblioteca (não baixar de novo).
+
+        Compara ``origem_url`` gravada no banco, então não depende de o arquivo
+        ter o mesmo nome. Serve para avisar antes de gastar download.
+        """
+        try:
+            conhecidas = {m.origem_url for m in biblioteca.listar()
+                          if getattr(m, "origem_url", "")}
+        except Exception:
+            return []
+        return [item for item in self._itens if item.url in conhecidas]
+
+    def estimativa(self) -> tuple[int, int]:
+        """``(segundos, bytes aproximados)`` do que está na cesta."""
+        from limites import estimar
+
+        return estimar(item.duracao for item in self._itens)
+
+    def desfazer_remocao(self) -> int:
+        """Devolve os itens da última remoção (o "Desfazer" da tela).
+
+        Guardar o que saiu e por qual posição evita o clássico "removi sem
+        querer e agora não sei qual era".
+        """
+        removidos = list(getattr(self, "_removidos", []))
+        if not removidos:
+            return 0
+        for posicao, item in removidos:
+            if self.contem(item.url, item.formato):
+                continue
+            posicao = max(0, min(int(posicao), len(self._itens)))
+            self._itens.insert(posicao, item)
+        self._removidos = []
+        self._gravar()
+        return len(removidos)
+
+    def mover_para(self, indice: int, destino: int) -> bool:
+        """Move um item para o topo (0) ou para o fim (-1)."""
+        with self._lock:
+            if not 0 <= indice < len(self._itens):
+                return False
+            item = self._itens.pop(indice)
+            if destino < 0 or destino >= len(self._itens):
+                self._itens.append(item)
+            else:
+                self._itens.insert(destino, item)
+            self._gravar()
+            return True
 
     def agrupado_por_origem(self) -> dict[str, int]:
         """Quantos itens vieram de cada pesquisa/playlist (a tela mostra)."""
