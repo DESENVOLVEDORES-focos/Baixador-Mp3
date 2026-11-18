@@ -17,6 +17,7 @@ from historico import Historico
 from integracao import AdaptadorMetadados
 from organizacao import caminho_disponivel, subpasta
 from pesquisa import ErroPesquisa, Pesquisador
+from previa import Previa, pasta_para_tocar
 
 
 class Aplicacao:
@@ -42,6 +43,7 @@ class Aplicacao:
         self.fila = FilaDownloads(configuracoes)
         self.historico = Historico(configuracoes)
         self.metadados = AdaptadorMetadados()
+        self.previa = Previa(configuracoes)
         # Última classificação de erro (a interface usa para a dica contextual)
         # e último arquivo publicado (para exibir/abrir a pasta).
         self.ultimo_diagnostico = None
@@ -130,6 +132,25 @@ class Aplicacao:
             print(f"[ERRO] {diagnostico.texto}", file=sys.stderr)
             self.ultimo_diagnostico = diagnostico
             return False, diagnostico.texto
+
+    # -- pré-visualização ---------------------------------------------------
+    def preparar_previa(self, url: str) -> Any:
+        """Consulta o vídeo (sem baixar) e devolve ``DadosVideo`` + indícios."""
+        return self.previa.preparar(url)
+
+    def ouvir_previa(self, url: str, segundos: int = 20) -> tuple[Path, Path]:
+        """Baixa um trecho curto e devolve ``(arquivo, pasta)`` para tocar.
+
+        A pasta é exclusiva desta prévia: quem chamou deve apagá-la depois com
+        ``previa.limpar`` (a interface faz isso ao fechar ou ao pedir outra).
+        """
+        import tempfile
+
+        # A pasta de dados pode ainda não existir (primeira execução).
+        self.config.dados.mkdir(parents=True, exist_ok=True)
+        pasta = Path(tempfile.mkdtemp(prefix="previa-", dir=str(self.config.dados)))
+        arquivo = self.previa.baixar_amostra(url, pasta, segundos)
+        return pasta_para_tocar(arquivo, pasta), pasta
 
     def _organizar_em_subpasta(self, caminho: Any, formato: str) -> Any:
         """Move para ``Artista/Álbum`` usando só dados confirmados pela IA 2.

@@ -62,7 +62,8 @@ _REGRAS: tuple[tuple[str, str, str, str], ...] = (
      "O vídeo foi removido ou não está mais disponível.",
      "Procure outro resultado."),
     (SITUACAO_NAO_ENCONTRADO,
-     r"http error 404|not found|does not exist|unable to download webpage",
+     r"http error 404|\b404\b|not found|does not exist|video unavailable|"
+     r"this video is (?:not available|unavailable)",
      "O endereço não existe mais (ou está errado/incompleto).",
      "Copie a URL de novo do navegador."),
     (SITUACAO_REDE,

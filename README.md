@@ -36,6 +36,18 @@ em <https://ffmpeg.org/download.html> e coloque `ffmpeg.exe` em `ferramentas\`.
    aceitar, salva uma cópia com outro nome. A política pode ser mudada em
    Configurações (perguntar / pular / renomear / sobrescrever).
 
+### Ouvir antes de baixar (aba Prévia)
+
+Música de **show** ou versão estendida não precisa mais ser descoberta depois do
+download:
+
+- **Conferir dados** mostra título, canal e duração reais do vídeo (sem baixar
+  mídia) e avisa quando o título/canal/duração indicam gravação ao vivo,
+  festival, versão estendida, remix, cover, slowed ou vídeo sem áudio.
+- **Ouvir trecho** baixa 10–40 s e abre no player do Windows. O trecho é
+  temporário e apagado ao clicar em "Parar e apagar trecho".
+- **Baixar este vídeo** baixa exatamente o que você conferiu.
+
 ### Configurações (aba própria)
 
 - **APIs**: chave de IA externa (opcional, protegida pelo Windows/DPAPI) e teste
@@ -97,6 +109,7 @@ python -m pytest -q
 
 `87 testes` automatizados cobrem, entre outros: download feliz de MP3/MP4 com
 yt-dlp simulado, **caminho de erro** (HTTP 404 vira mensagem, não traceback),
+prévia (análise de ao vivo, corte do trecho e limpeza),
 política de sobrescrita, progresso por etapa, limpeza de intermediários,
 miniaturas, cookies, preferências e a integração com metadados/capa.
 

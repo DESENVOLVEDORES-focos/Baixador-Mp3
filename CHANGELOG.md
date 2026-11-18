@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-11-17 — Prévia antes de baixar (evitar show), nomes longos e erros em português
+
+Pedido do usuário: muitas músicas estão em **shows/ao vivo** e só se percebe
+depois de baixar. Agora dá para conferir e ouvir **antes**, sem sujar `Musicas\`.
+
+### Novo: aba "Prévia (ouvir antes)"
+
+- **Conferir dados** consulta o yt-dlp (`-J`, sem baixar mídia) e mostra título,
+  canal e duração reais, além de sinalizar *ao vivo agora*, restrição de idade e
+  vídeo sem áudio.
+- **Análise conservadora de risco** (`previa.analisar`): aponta indícios de
+  gravação ao vivo (ao vivo/live/show/tour/festival/concert/unplugged/estádio,
+  canal de show, transmissão, duração ≥ 12 min) e de versões que não são a de
+  estúdio (extended, remix, cover, instrumental/karaokê, slowed/speed up).
+  Sempre diz **qual** foi o indício — nunca afirma "é show" por conta própria.
+- **Ouvir trecho**: baixa 10–40 s de áudio (`--download-sections`) e abre no
+  player do sistema; o arquivo fica numa pasta temporária em `.baixador` e é
+  apagado em "Parar e apagar trecho" ou ao fechar a prévia.
+- **Baixar este vídeo** e **Usar resultado selecionado** ligam a prévia à
+  pesquisa, para conferir exatamente o item escolhido.
+
+### Corrigido (encontrados em teste real)
+
+- **Nome de arquivo perdia o título**: `"Artista - Título"` estourando 150
+  caracteres era cortado pelo fim, apagando o título. Agora o artista é
+  abreviado e o título sempre sobrevive.
+- **Prévia falhava mesmo com FFmpeg instalado**: o `--download-sections` exige
+  `--ffmpeg-location`; sem isso o yt-dlp abortava com *"ffmpeg is not
+  installed"* apesar do `ffmpeg.exe` em `ferramentas\`.
+- **Primeira execução quebrava a prévia**: a pasta de dados ainda não existia
+  quando o `mkdtemp` era chamado (`FileNotFoundError`).
+- **Trecho vazio abria um player mudo**: corte em fonte sem duração declarada
+  gera arquivo de ~300 bytes; agora é detectado (< 2 KB), descartado e
+  explicado. Trecho acima de 4 MB também é descartado.
+- **Erro cru do yt-dlp na cara do usuário**: `_mostrar_erro` agora classifica
+  (rede, 404, vídeo indisponível, cookies…) e mostra explicação + ação; o texto
+  técnico vai sanitizado para o histórico.
+- **"Unable to download webpage: TLS…" era tratado como 404**: falha de rede
+  agora é classificada como rede, e `Video unavailable` como indisponível.
+
+### Testes
+
+- `tests/test_previa.py`: 24 testes (análise, comandos, execução simulada,
+  trecho vazio/grande, limpeza, conversão para MP3).
+- Suíte completa: **159 passed, 1 skipped**; `pyflakes` limpo.
+- Validação real (FFmpeg + yt-dlp, mídia local): conferir dados, trecho de 15 s
+  gerado a partir de um MP3 de 45 s e pasta temporária apagada ao final.
+
 ## 2026-11-17 — Identificação pelo resultado escolhido, nome apresentável e diagnóstico de erros
 
 Continuação da etapa anterior, motivada por uso real (yt-dlp 2026.10.26 +

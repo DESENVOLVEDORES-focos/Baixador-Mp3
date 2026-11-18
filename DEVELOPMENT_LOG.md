@@ -234,3 +234,35 @@
   expiração, então o popup dizia "válido" mesmo com todos os cookies vencidos.
   `contar_vencidos` passou a ser usado em `importar()` e em `status()`.
 - Testes novos: `TestCookiesVencidos` (4 casos, incluindo cookie de sessão).
+
+## 2026-11-17 — Prévia antes de baixar
+
+### Motivo
+Música de show entra na pasta como se fosse estúdio; o usuário só descobre
+depois. A prévia resolve na seleção, não no arrependimento.
+
+### Método
+- `previa.py` isolado do resto: só fala com `subprocess.run` (yt-dlp) e com o
+  FFmpeg de `ferramentas\`; toda falha vira `ErroPrevia` com texto em português.
+- Validação real com `http.server` + MP3 de 45 s (FFmpeg 9.0.2 + yt-dlp
+  2026.10.26): `preparar` leu título/duração; `ouvir_previa(15)` produziu
+  `previa.mp3` de 120 598 bytes com duração exata de 15 s.
+- Interface exercitada com o Tk simulado: aba montada, "Conferir dados" com
+  dados de show exibindo o alerta, "Ouvir" chamando o player do sistema e
+  "Parar" apagando a pasta.
+
+### Defeitos reais encontrados no caminho
+1. `--download-sections` aborta sem `--ffmpeg-location` — o downloader normal já
+   passava, a prévia não.
+2. `mkdtemp` em `.baixador` falhava na primeira execução (pasta inexistente).
+3. Fonte sem duração (m4a sintético) gerava trecho de 331 bytes e o player
+   abria vazio — agora < 2 KB é recusado com explicação.
+4. Título longo sumia do nome do arquivo (corrigido em `organizacao.nome_arquivo`).
+5. Erro de TLS classificado como 404 e erro cru exibido ao usuário.
+
+### Decisões
+- Prévia **não** é obrigatória nem automática: custa rede e tempo. Fica na aba
+  própria e no botão "Ouvir antes de baixar".
+- O trecho é sempre temporário e apagado; nunca aparece em `Musicas\`.
+- Análise de risco é textual e explicada: sem promessa de acertar tudo, mas
+  sem inventar "é ao vivo" quando não há indício.

@@ -87,6 +87,22 @@ class ControladorInterface:
     def pasta_dados(self) -> Path:
         return self.config.dados
 
+    # -- pré-visualização (ouvir antes de baixar) ---------------------------
+    def inspecionar(self, url: str):
+        """Dados do vídeo + indícios de ao vivo/show, sem baixar mídia."""
+        return self.aplicacao.preparar_previa(url)
+
+    def ouvir_trecho(self, url: str, segundos: int = 20) -> tuple[Any, Any]:
+        """Baixa um trecho curto: ``(arquivo_para_tocar, pasta_temporaria)``."""
+        return self.aplicacao.ouvir_previa(url, segundos)
+
+    def descartar_previa(self, pasta: Any) -> None:
+        """Apaga o trecho baixado (nunca deixa lixo em `.baixador`)."""
+        if pasta:
+            from previa import limpar
+
+            limpar(Path(pasta))
+
     def ultimo_caminho(self) -> str:
         """Caminho do último arquivo publicado (para exibir/abrir)."""
         return self._ultimo_caminho
@@ -306,15 +322,18 @@ class AplicativoGrafico:
         self.aba_baixar = ttk.Frame(abas)
         self.aba_fila = ttk.Frame(abas)
         self.aba_historico = ttk.Frame(abas)
+        self.aba_previa = ttk.Frame(abas)
         self.aba_config = ttk.Frame(abas)
         abas.add(self.aba_baixar, text="Baixar")
         abas.add(self.aba_fila, text="Fila")
         abas.add(self.aba_historico, text="Histórico")
+        abas.add(self.aba_previa, text="Prévia (ouvir antes)")
         abas.add(self.aba_config, text="Configurações")
 
         self._montar_baixar()
         self._montar_fila()
         self._montar_historico()
+        self._montar_previa()
         self._montar_configuracoes()
         self.raiz.after(120, self._processar_eventos)
 
@@ -357,9 +376,20 @@ class AplicativoGrafico:
         self.raiz.after(120, self._processar_eventos)
 
     def _mostrar_erro(self, erro: Exception) -> None:
-        self._registrar(f"[ERRO] {erro}")
-        self._definir_status(f"Erro: {erro}")
-        messagebox.showerror("Baixador-Mp3", str(erro))
+        """Erro em português: classificação + ação, com o técnico sanitizado.
+
+        O usuário não deve receber um rastreamento do yt-dlp na cara; a
+        mensagem crua fica no histórico (sanitizada) para diagnóstico.
+        """
+        from diagnostico import classificar, dica_para_interface, sanitizar
+
+        diagnostico = classificar(str(erro))
+        texto = dica_para_interface(
+            diagnostico, bool(self.controlador.status_cookies().configurado))
+        self._registrar(f"[ERRO] {texto} | técnico: {sanitizar(str(erro))}")
+        self._definir_status(f"Erro: {diagnostico.explicacao}")
+        messagebox.showerror("Baixador-Mp3", f"{diagnostico.explicacao}\n\n"
+                                             f"{diagnostico.acao}")
 
     def _registrar(self, texto: str) -> None:
         self.log_text.configure(state="normal")
@@ -422,6 +452,8 @@ class AplicativoGrafico:
                    command=self._ao_baixar_selecionado).pack(side="left")
         ttk.Button(botoes, text="Adicionar selecionado à fila",
                    command=self._ao_enfileirar_selecionado).pack(side="left", padx=6)
+        ttk.Button(botoes, text="Ouvir antes de baixar (prévia)",
+                   command=self._ao_previas_selecionado).pack(side="left", padx=6)
 
         self._montar_downloads(aba)
 
@@ -735,6 +767,171 @@ class AplicativoGrafico:
                 registro.get("mensagem") or ""))
 
     # -- aba Configurações --------------------------------------------------
+    # -- aba Prévia ---------------------------------------------------------
+    def _montar_previa(self) -> None:
+        """Ouvir/checar antes de baixar: evita show e versão errada."""
+        aba = self.aba_previa
+        ttk.Label(aba, text=(
+            "Antes de baixar, confira o que é: a prévia mostra título, canal e "
+            "duração reais e avisa quando o título indica gravação ao vivo "
+            "(show), versão estendida, remix ou cover. O botão “Ouvir” baixa um "
+            "trecho curto (20 s) e abre no player do Windows — nada é salvo em "
+            "Musicas\\."), wraplength=900, justify="left").pack(
+            anchor="w", padx=8, pady=(8, 4))
+
+        linha = ttk.Frame(aba)
+        linha.pack(fill="x", padx=8, pady=4)
+        self.previa_url_var = tk.StringVar()
+        ttk.Label(linha, text="URL do vídeo:").pack(side="left")
+        ttk.Entry(linha, textvariable=self.previa_url_var).pack(
+            side="left", fill="x", expand=True, padx=6)
+        ttk.Button(linha, text="Usar resultado selecionado",
+                   command=self._previa_do_selecionado).pack(side="left")
+        ttk.Button(linha, text="Conferir dados",
+                   command=self._ao_conferir).pack(side="left", padx=6)
+
+        dados = ttk.LabelFrame(aba, text="Dados do vídeo (sem baixar)")
+        dados.pack(fill="x", padx=8, pady=6)
+        self.previa_info_var = tk.StringVar(value="Nada conferido ainda.")
+        ttk.Label(dados, textvariable=self.previa_info_var, wraplength=900,
+                  justify="left").pack(anchor="w", padx=6, pady=6)
+        self.previa_alerta_var = tk.StringVar(value="")
+        self.previa_alerta_label = tk.Label(
+            dados, textvariable=self.previa_alerta_var, wraplength=880,
+            justify="left", anchor="w", fg="#8a4b00")
+        self.previa_alerta_label.pack(fill="x", padx=6, pady=(0, 6))
+
+        acoes = ttk.Frame(dados)
+        acoes.pack(fill="x", padx=6, pady=(0, 6))
+        self.previa_segundos_var = tk.StringVar(value="20")
+        ttk.Label(acoes, text="Segundos do trecho:").pack(side="left")
+        ttk.Combobox(acoes, textvariable=self.previa_segundos_var, width=4,
+                     values=("10", "20", "30", "40")).pack(side="left", padx=4)
+        ttk.Button(acoes, text="Ouvir trecho",
+                   command=self._ao_ouvir_trecho).pack(side="left", padx=6)
+        ttk.Button(acoes, text="Parar e apagar trecho",
+                   command=self._ao_parar_previa).pack(side="left")
+        ttk.Button(acoes, text="Baixar este vídeo",
+                   command=self._ao_baixar_previa).pack(side="left", padx=6)
+        self.previa_trecho_var = tk.StringVar(value="")
+        ttk.Label(aba, textvariable=self.previa_trecho_var).pack(
+            anchor="w", padx=8, pady=(0, 8))
+        self._previa_pasta: Any = None
+
+    def _previa_do_selecionado(self) -> None:
+        resultado = self._selecionado(silencioso=True)
+        if resultado is None:
+            messagebox.showinfo("Prévia", "Selecione um resultado na aba Baixar.")
+            return
+        self.previa_url_var.set(resultado.url)
+        self._ao_conferir()
+
+    def _url_da_previa(self) -> str:
+        url = self.previa_url_var.get().strip()
+        if not url:
+            selecionado = self._selecionado(silencioso=True)
+            url = getattr(selecionado, "url", "") if selecionado else ""
+        if not url:
+            messagebox.showwarning("Prévia", "Informe a URL ou selecione um resultado.")
+        return url
+
+    def _ao_conferir(self) -> None:
+        url = self._url_da_previa()
+        if not url:
+            return
+        self.previa_info_var.set("Conferindo com o yt-dlp (sem baixar mídia)...")
+        self.previa_alerta_var.set("")
+        self._definir_status("Conferindo o vídeo...")
+
+        def concluir(dados: Any) -> None:
+            duracao = getattr(dados, "duracao", None)
+            minutos = f"{duracao // 60}:{duracao % 60:02}" if duracao else "desconhecida"
+            canal = getattr(dados, "canal", "") or "(canal não informado)"
+            titulo = getattr(dados, "titulo", "") or "(sem título)"
+            extras = []
+            if getattr(dados, "ao_vivo", False):
+                extras.append("AO VIVO agora")
+            if getattr(dados, "idade_restrita", False):
+                extras.append("restrição de idade (precisa de cookies)")
+            if not getattr(dados, "tem_audio", True):
+                extras.append("sem faixa de áudio: não dá para extrair MP3")
+            self.previa_info_var.set(
+                f"{titulo}\nCanal: {canal} | Duração: {minutos}"
+                + ("\n" + " | ".join(extras) if extras else ""))
+            analise = getattr(dados, "analise", None)
+            if analise is not None and getattr(analise, "alerta", False):
+                self.previa_alerta_var.set(
+                    "ATENÇÃO — pode não ser a versão de estúdio: "
+                    + analise.resumo())
+            else:
+                self.previa_alerta_var.set(
+                    "Sem indício de show/ao vivo pelo título, canal ou duração.")
+            self._definir_status("Vídeo conferido.")
+
+        self._executar(lambda: self.controlador.inspecionar(url), concluir)
+
+    def _ao_ouvir_trecho(self) -> None:
+        url = self._url_da_previa()
+        if not url:
+            return
+        try:
+            segundos = int(float(self.previa_segundos_var.get() or 20))
+        except (TypeError, ValueError):
+            segundos = 20
+        self._ao_parar_previa()  # nunca acumula trechos antigos
+        self.previa_trecho_var.set(f"Baixando {segundos}s de amostra...")
+        self._definir_status("Preparando prévia...")
+
+        def concluir(resultado: Any) -> None:
+            arquivo, pasta = resultado
+            self._previa_pasta = pasta
+            self.previa_trecho_var.set(f"Trecho em {arquivo} (temporário)")
+            self._definir_status("Tocando prévia no player do sistema.")
+            self._registrar(f"Prévia de {segundos}s: {Path(arquivo).name}")
+            self._abrir_arquivo(arquivo)
+
+        self._executar(lambda: self.controlador.ouvir_trecho(url, segundos), concluir)
+
+    def _ao_parar_previa(self) -> None:
+        if self._previa_pasta:
+            self.controlador.descartar_previa(self._previa_pasta)
+            self._previa_pasta = None
+            self.previa_trecho_var.set("Trecho apagado.")
+
+    def _ao_baixar_previa(self) -> None:
+        url = self._url_da_previa()
+        if not url:
+            return
+        selecionado = self._selecionado(silencioso=True)
+        contexto = selecionado if getattr(selecionado, "url", "") == url else None
+        self._baixar(url, self.formato_var.get(), contexto=contexto)
+
+    def _abrir_arquivo(self, caminho: Path) -> None:
+        """Abre o arquivo no aplicativo padrão do sistema (player de áudio)."""
+        caminho = Path(caminho)
+        try:
+            if os.name == "nt":
+                os.startfile(str(caminho))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                os.system(f'open "{caminho}"')
+            else:
+                os.system(f'xdg-open "{caminho}" >/dev/null 2>&1 &')
+        except Exception as erro:
+            messagebox.showerror("Prévia", f"Não foi possível abrir o trecho: {erro}")
+
+    def _ao_previas_selecionado(self) -> None:
+        """Leva o resultado selecionado para a aba Prévia e confere os dados."""
+        resultado = self._selecionado(silencioso=True)
+        if resultado is None:
+            messagebox.showinfo("Prévia", "Selecione um resultado na lista.")
+            return
+        self.previa_url_var.set(resultado.url)
+        try:
+            self._abas.select(self.aba_previa)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        self._ao_conferir()
+
     def _montar_configuracoes(self) -> None:
         # Área rolável: são muitas opções em janelas menores.
         canvas = tk.Canvas(self.aba_config, highlightthickness=0)

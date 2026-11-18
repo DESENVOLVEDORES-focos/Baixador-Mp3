@@ -61,6 +61,17 @@ def nome_arquivo(*, titulo: str, artista: str = "", desconhecido: str = "") -> s
     titulo_limpo = limpar_componente(titulo)
     artista_limpo = limpar_componente(artista)
     if artista_limpo and titulo_limpo:
+        # Orçamento do nome: o título NUNCA é cortado pelo crescimento do
+        # artista. Sem isso, "Artista Longo - Título Longo" perdia o título
+        # inteiro no corte de 150 caracteres (defeito reproduzido).
+        # Artista que ocuparia mais de 60% do nome é abreviado: o título é a
+        # informação que identifica a faixa para o usuário.
+        # O artista + separador não passa de 40% do limite.
+        maxima_artista = int(LIMITE_COMPONENTE * 0.4) - 3
+        if len(artista_limpo) > maxima_artista:
+            artista_limpo = artista_limpo[:maxima_artista].rstrip(" .")
+        espaco_titulo = max(40, LIMITE_COMPONENTE - len(artista_limpo) - 3)
+        titulo_limpo = titulo_limpo[:espaco_titulo].rstrip(" .") or titulo_limpo
         # Evita "Queen - Queen - Bohemian Rhapsody": o título que já começa pelo
         # artista (com ou sem separador) não é prefixado de novo.
         titulo_baixo = titulo_limpo.lower()
