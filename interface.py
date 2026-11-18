@@ -128,6 +128,28 @@ class ControladorInterface:
 
         return IdentificadorIA(config=self.config).identificar(consulta, canal)
 
+    # -- manutenção ---------------------------------------------------------
+    def versao_ytdlp(self) -> str:
+        from atualizacao import versao_instalada
+
+        return versao_instalada(self.aplicacao.config)
+
+    def atualizar_ytdlp(self):
+        from atualizacao import atualizar
+
+        return atualizar(self.aplicacao.config)
+
+    # -- lote e playlist ----------------------------------------------------
+    def listar_playlist(self, url: str, limite: int = 200):
+        """Itens de uma playlist/canal (só metadados, nada baixado)."""
+        return self.aplicacao.listar_playlist(url, limite)
+
+    def baixar_lote(self, urls: list[str], formato: str, ao_item=None,
+                    ao_progresso=None) -> list[tuple[str, bool, str]]:
+        """Baixa várias URLs em sequência; nunca para no primeiro erro."""
+        return self.aplicacao.baixar_varios(
+            urls, formato, ao_progresso=ao_progresso, ao_item=ao_item)
+
     # -- pré-visualização (ouvir antes de baixar) ---------------------------
     def inspecionar(self, url: str):
         """Dados do vídeo + indícios de ao vivo/show, sem baixar mídia."""
@@ -373,17 +395,20 @@ class AplicativoGrafico:
         self.aba_baixar = ttk.Frame(abas)
         self.aba_fila = ttk.Frame(abas)
         self.aba_historico = ttk.Frame(abas)
+        self.aba_lote = ttk.Frame(abas)
         self.aba_previa = ttk.Frame(abas)
         self.aba_config = ttk.Frame(abas)
         abas.add(self.aba_baixar, text="Baixar")
         abas.add(self.aba_fila, text="Fila")
         abas.add(self.aba_historico, text="Histórico")
+        abas.add(self.aba_lote, text="Lote / Playlist")
         abas.add(self.aba_previa, text="Prévia (ouvir antes)")
         abas.add(self.aba_config, text="Configurações")
 
         self._montar_baixar()
         self._montar_fila()
         self._montar_historico()
+        self._montar_lote()
         self._montar_previa()
         self._montar_configuracoes()
         self.raiz.after(120, self._processar_eventos)
@@ -415,6 +440,11 @@ class AplicativoGrafico:
                     self._aplicar_progresso(item, progresso)
                 elif tipo == "thumb":
                     self._mostrar_thumb(valor)
+                elif tipo == "lote":
+                    posicao, total, referencia = valor
+                    self.lote_progresso_var.set(
+                        f"Item {posicao} de {total}: {referencia}")
+                    self._definir_status(f"Baixando {posicao}/{total}...")
                 elif tipo == "ok" and callback:
                     callback(valor)
                 elif tipo == "erro":
@@ -479,7 +509,9 @@ class AplicativoGrafico:
         corpo.pack(fill="both", expand=True)
         self.resultados_tree = ttk.Treeview(
             corpo, columns=("titulo", "canal", "duracao", "oficial"),
-            show="headings", height=10, selectmode="browse")
+            show="headings", height=10,
+            # "extended": Ctrl+clique e Shift+clique para escolher vários.
+            selectmode="extended")
         for coluna, titulo, largura in (
                 ("titulo", "Título", 420), ("canal", "Canal", 200),
                 ("duracao", "Duração", 80), ("oficial", "Canal verificado", 120)):
@@ -505,6 +537,9 @@ class AplicativoGrafico:
                    command=self._ao_enfileirar_selecionado).pack(side="left", padx=6)
         ttk.Button(botoes, text="Ouvir antes de baixar (prévia)",
                    command=self._ao_previas_selecionado).pack(side="left", padx=6)
+        ttk.Button(botoes, text="Baixar selecionados",
+                   command=self._baixar_varios_selecionados).pack(
+            side="left", padx=6)
 
         self._montar_downloads(aba)
 
@@ -616,6 +651,43 @@ class AplicativoGrafico:
         indice = self.resultados_tree.index(escolha[0])
         return self._resultados[indice] if indice < len(self._resultados) else None
 
+    def _selecionados(self) -> list[Any]:
+        """Todos os resultados marcados (Ctrl+clique / Shift+clique)."""
+        escolhas = list(self.resultados_tree.selection())  # type: ignore[attr-defined]
+        escolhidos: list[Any] = []
+        for iid in escolhas:
+            try:
+                indice = self.resultados_tree.index(iid)
+            except Exception:
+                continue
+            if indice < len(self._resultados):
+                escolhidos.append(self._resultados[indice])
+        return escolhidos
+
+    def _baixar_varios_selecionados(self) -> None:
+        """Baixa todos os resultados marcados, mostrando 1 de N."""
+        escolhidos = self._selecionados()
+        if not escolhidos:
+            messagebox.showinfo("Baixar", "Selecione um ou mais resultados "
+                                          "(Ctrl+clique para vários).")
+            return
+        formato = self.formato_var.get()
+        urls = [resultado.url for resultado in escolhidos]
+        if len(urls) > 5 and not messagebox.askyesno(
+                "Baixar vários",
+                f"Baixar {len(urls)} itens em {formato.upper()}?"):
+            return
+
+        def ao_item(posicao: int, total: int, referencia: str) -> None:
+            self._fila_eventos.put(("lote", (posicao, total, referencia[:60]), None))
+
+        def concluir(resultados: list[tuple[str, bool, str]]) -> None:
+            self._finalizar_lote(resultados)
+
+        self._executar(
+            lambda: self.controlador.baixar_lote(urls, formato, ao_item=ao_item),
+            concluir, lambda erro: self._mostrar_erro(erro))
+
     def _baixar(self, url: str, formato: str, contexto: Any = None) -> None:
         self._definir_status(f"Preparando {formato.upper()}...")
         item = self.downloads_tree.insert("", "end", values=(
@@ -714,11 +786,42 @@ class AplicativoGrafico:
             + (f" — faltam {progresso.eta}" if progresso.eta else ""))
 
     def _ao_baixar_url(self) -> None:
-        url = self.url_var.get().strip()
-        if not url:
+        texto = self.url_var.get().strip()
+        if not texto:
             messagebox.showwarning("Baixador-Mp3", "Cole uma URL primeiro.")
             return
-        self._baixar(url, self.formato_var.get())
+        # Aceita uma URL por linha (ou separadas por espaço/vírgula).
+        urls: list[str] = []
+        for pedaco in texto.replace(",", "\n").replace(";", "\n").split():
+            if pedaco.startswith(("http://", "https://")) and pedaco not in urls:
+                urls.append(pedaco)
+        if not urls:
+            messagebox.showwarning(
+                "Baixador-Mp3",
+                "Não encontrei uma URL começando com http:// ou https://.")
+            return
+        if len(urls) > 1:
+            # Várias URLs: passa pelo mesmo lote (1 de N, sem parar no erro).
+            self._baixar_urls(urls)
+            return
+        self._baixar(urls[0], self.formato_var.get())
+
+    def _baixar_urls(self, urls: list[str]) -> None:
+        """Baixa uma lista de URLs mostrando o progresso item a item."""
+        formato = self.formato_var.get()
+        if len(urls) > 5 and not messagebox.askyesno(
+                "Baixar vários",
+                f"Baixar {len(urls)} link(s) em {formato.upper()}?"):
+            return
+
+        def ao_item(posicao: int, total: int, referencia: str) -> None:
+            self._fila_eventos.put(
+                ("lote", (posicao, total, str(referencia)[:60]), None))
+
+        self._executar(
+            lambda: self.controlador.baixar_lote(urls, formato, ao_item=ao_item),
+            lambda resultados: self._finalizar_lote(resultados),
+            lambda erro: self._mostrar_erro(erro))
 
     def _ao_baixar_selecionado(self) -> None:
         resultado = self._selecionado()
@@ -782,6 +885,30 @@ class AplicativoGrafico:
         self._registrar(f"Itens reabertos: {qtd}")
         self._atualizar_fila()
 
+    def _ao_enfileirar_playlist(self) -> None:
+        """Manda a playlist listada inteira para a fila (nada baixa agora)."""
+        playlist = self._playlist_atual
+        if playlist is None:
+            messagebox.showinfo(
+                "Fila", "Liste uma playlist primeiro (aba Lote / Playlist).")
+            return
+        formato = self.formato_var.get()
+        disponiveis = [item for item in playlist.itens if item.disponivel]
+        if not disponiveis:
+            messagebox.showinfo(
+                "Fila", "A playlist listada não tem itens disponíveis.")
+            return
+        novos = 0
+        for item in disponiveis:
+            antes = len(self.controlador.listar_fila())
+            self.controlador.adicionar_fila(item.url, formato)
+            if len(self.controlador.listar_fila()) > antes:
+                novos += 1
+        self._atualizar_fila()
+        self._registrar(f"Playlist na fila: {novos} novo(s) de "
+                        f"{len(disponiveis)} item(ns).")
+        self._definir_status(f"{novos} item(ns) adicionados à fila.")
+
     # -- aba Histórico ------------------------------------------------------
     def _montar_historico(self) -> None:
         aba = self.aba_historico
@@ -794,10 +921,61 @@ class AplicativoGrafico:
                 ("mensagem", "Mensagem", 260)):
             self.historico_tree.heading(coluna, text=titulo)
             self.historico_tree.column(coluna, width=largura)
+        self.historico_tree.configure(selectmode="extended")
         self.historico_tree.pack(fill="both", expand=True, padx=8, pady=8)
-        ttk.Button(aba, text="Atualizar", command=self._atualizar_historico).pack(
-            padx=8, pady=(0, 8), anchor="w")
+        acoes = ttk.Frame(aba)
+        acoes.pack(padx=8, pady=(0, 8), anchor="w")
+        ttk.Button(acoes, text="Atualizar",
+                   command=self._atualizar_historico).pack(side="left")
+        ttk.Button(acoes, text="Baixar de novo",
+                   command=self._ao_rebaixar).pack(side="left", padx=6)
         self._atualizar_historico()
+
+    def _ao_rebaixar(self) -> None:
+        """Rebaixa o que está marcado no histórico (usando a URL original)."""
+        registros = getattr(self, "_historico_atual", [])
+        escolhas = list(self.historico_tree.selection())  # type: ignore[attr-defined]
+        if not escolhas:
+            messagebox.showinfo(
+                "Histórico", "Selecione uma ou mais linhas do histórico.")
+            return
+        urls: list[str] = []
+        for iid in escolhas:
+            try:
+                indice = int(str(iid))
+            except ValueError:
+                indice = self.historico_tree.index(iid)
+            if 0 <= indice < len(registros):
+                url = str(registros[indice].get("url") or "")
+                if url.startswith(("http://", "https://")) and url not in urls:
+                    urls.append(url)
+        if not urls:
+            messagebox.showinfo(
+                "Histórico", "As linhas marcadas não têm URL para rebaixar.")
+            return
+        formato = self.formato_var.get()
+        self._registrar(f"Rebaixando {len(urls)} item(ns) do histórico.")
+
+        self._executar(
+            lambda: self.controlador.baixar_lote(urls, formato),
+            lambda resultados: self._finalizar_lote(resultados),
+            lambda erro: self._mostrar_erro(erro))
+
+    def _finalizar_lote(self, resultados: list[tuple[str, bool, str]]) -> None:
+        ok = sum(1 for _u, sucesso, _m in resultados if sucesso)
+        falhas = len(resultados) - ok
+        self.lote_progresso_var.set(
+            f"Lote concluído: {ok} com sucesso, {falhas} com falha.")
+        self._registrar(f"Lote: {ok} sucesso(s), {falhas} falha(s).")
+        self._definir_status(f"Lote concluído: {ok}/{len(resultados)}.")
+        self._atualizar_historico()
+        if falhas:
+            detalhes = "\n".join(
+                f"- {url[:60]}: {mensagem[:90]}"
+                for url, sucesso, mensagem in resultados if not sucesso)
+            messagebox.showwarning(
+                "Lote concluído com falhas",
+                f"{ok} baixado(s), {falhas} com falha:\n\n{detalhes}")
 
     def _atualizar_historico(self) -> None:
         if not hasattr(self, "historico_tree"):
@@ -809,8 +987,10 @@ class AplicativoGrafico:
         except Exception as erro:
             self._definir_status(f"Erro ao ler o histórico: {erro}")
             return
-        for registro in registros:
-            self.historico_tree.insert("", "end", values=(
+        self._historico_atual = registros
+        for posicao, registro in enumerate(registros):
+            # iid = posição: rebaixar não depende da ordem visual da tabela.
+            self.historico_tree.insert("", "end", iid=str(posicao), values=(
                 _data_legivel(registro.get("data_hora")),
                 str(registro.get("formato") or "").upper(),
                 registro.get("status") or "",
@@ -818,6 +998,209 @@ class AplicativoGrafico:
                 registro.get("mensagem") or ""))
 
     # -- aba Configurações --------------------------------------------------
+    # -- aba Lote / Playlist ------------------------------------------------
+    def _montar_lote(self) -> None:
+        """Playlist inteira, vários vídeos e uma lista de URLs de uma vez."""
+        aba = self.aba_lote
+        ttk.Label(aba, text=(
+            "Cole a URL de uma playlist/canal e clique em \"Listar\": nada é "
+            "baixado na listagem. Depois escolha os itens (Ctrl+clique, "
+            "Shift+clique, ou os botões de seleção rápida) e mande baixar. "
+            "Itens privados/removidos são ignorados automaticamente."),
+            wraplength=900, justify="left").pack(anchor="w", padx=8, pady=(8, 4))
+
+        linha = ttk.Frame(aba)
+        linha.pack(fill="x", padx=8, pady=4)
+        self.lote_url_var = tk.StringVar()
+        ttk.Label(linha, text="URL da playlist:").pack(side="left")
+        ttk.Entry(linha, textvariable=self.lote_url_var).pack(
+            side="left", fill="x", expand=True, padx=6)
+        ttk.Button(linha, text="Listar", command=self._ao_listar_playlist).pack(
+            side="left")
+        ttk.Button(linha, text="Listar mais (500)",
+                   command=lambda: self._ao_listar_playlist(500)).pack(
+            side="left", padx=6)
+        ttk.Button(linha, text="Colar da área de transferência",
+                   command=self._ao_colar_url).pack(side="left", padx=6)
+
+        self.lote_info_var = tk.StringVar(value="Nenhuma playlist listada.")
+        ttk.Label(aba, textvariable=self.lote_info_var, wraplength=900,
+                  justify="left").pack(anchor="w", padx=8)
+
+        corpo = ttk.Frame(aba)
+        corpo.pack(fill="both", expand=True, padx=8, pady=4)
+        self.lote_tree = ttk.Treeview(
+            corpo, columns=("n", "titulo", "duracao", "situacao"),
+            show="headings", height=14, selectmode="extended")
+        for coluna, titulo, largura in (
+                ("n", "#", 50), ("titulo", "Título", 520),
+                ("duracao", "Duração", 90), ("situacao", "Situação", 160)):
+            self.lote_tree.heading(coluna, text=titulo)
+            self.lote_tree.column(coluna, width=largura)
+        self.lote_tree.pack(side="left", fill="both", expand=True)
+        rolagem = ttk.Scrollbar(corpo, orient="vertical",
+                                command=self.lote_tree.yview)
+        self.lote_tree.configure(yscrollcommand=rolagem.set)
+        rolagem.pack(side="right", fill="y")
+
+        acoes = ttk.Frame(aba)
+        acoes.pack(fill="x", padx=8, pady=(0, 4))
+        ttk.Button(acoes, text="Selecionar tudo",
+                   command=lambda: self._selecionar_tudo_lote(True)
+                   ).pack(side="left")
+        ttk.Button(acoes, text="Limpar seleção",
+                   command=lambda: self._selecionar_tudo_lote(False)
+                   ).pack(side="left", padx=6)
+        ttk.Button(acoes, text="Marcar sem ao vivo/show",
+                   command=self._marcar_sem_ao_vivo).pack(side="left", padx=6)
+        ttk.Button(acoes, text="Baixar selecionados",
+                   command=self._ao_baixar_lote).pack(side="left", padx=6)
+        ttk.Button(acoes, text="Adicionar selecionados à fila",
+                   command=self._ao_enfileirar_lote).pack(side="left")
+        ttk.Button(acoes, text="Playlist inteira na fila",
+                   command=self._ao_enfileirar_playlist).pack(
+            side="left", padx=6)
+
+        ttk.Label(aba, text="Ou cole várias URLs (uma por linha):").pack(
+            anchor="w", padx=8, pady=(8, 0))
+        self.lote_urls_text = tk.Text(aba, height=5, wrap="none")
+        self.lote_urls_text.pack(fill="x", padx=8, pady=4)
+        self.lote_progresso_var = tk.StringVar(value="")
+        ttk.Label(aba, textvariable=self.lote_progresso_var).pack(
+            anchor="w", padx=8, pady=(0, 8))
+        self._playlist_atual: Any = None
+
+    def _ao_colar_url(self) -> None:
+        """Colar da área de transferência (Ctrl+V já funciona nos campos)."""
+        try:
+            texto = self.raiz.clipboard_get()  # type: ignore[attr-defined]
+        except Exception:
+            messagebox.showinfo("Colar", "A área de transferência está vazia.")
+            return
+        texto = (texto or "").strip()
+        if texto:
+            self.lote_url_var.set(texto.split()[0])
+
+    def _ao_listar_playlist(self, limite: int = 200) -> None:
+        url = self.lote_url_var.get().strip()
+        if not url:
+            messagebox.showwarning("Playlist", "Cole a URL da playlist ou canal.")
+            return
+        self.lote_info_var.set("Listando os itens (sem baixar nada)...")
+        self._definir_status("Listando playlist...")
+
+        def concluir(playlist: Any) -> None:
+            self._playlist_atual = playlist
+            for item in self.lote_tree.get_children():
+                self.lote_tree.delete(item)
+            for item in playlist.itens:
+                self.lote_tree.insert("", "end", iid=str(item.indice), values=(
+                    item.indice, item.titulo, item.duracao_formatada,
+                    "disponível" if item.disponivel else "privado/removido"))
+            minutos = playlist.duracao_total // 60
+            aviso = ""
+            restantes = getattr(playlist, "restantes", 0)
+            if restantes > 0:
+                aviso = (f" ATENÇÃO: {restantes} item(ns) não foram listados "
+                         "(playlist longa). Use \"Listar mais\" para incluir.")
+            elif playlist.truncada:
+                aviso = (f" Mostrando os primeiros {playlist.quantidade} "
+                         "item(ns).")
+            self.lote_info_var.set(
+                f"{playlist.titulo or 'Playlist'} — {playlist.quantidade} "
+                f"item(ns), ~{minutos} min no total.{aviso}")
+            self._registrar(f"Playlist listada: {playlist.quantidade} item(ns).")
+            self._definir_status(f"{playlist.quantidade} item(ns) na playlist.")
+
+        self._executar(
+            lambda: self.controlador.listar_playlist(url, limite), concluir,
+            lambda erro: self._mostrar_erro(erro))
+
+    def _selecionar_tudo_lote(self, marcar: bool) -> None:
+        itens = self.lote_tree.get_children()
+        if marcar:
+            self.lote_tree.selection_set(itens)  # type: ignore[attr-defined]
+        else:
+            self.lote_tree.selection_remove(itens)  # type: ignore[attr-defined]
+
+    def _marcar_sem_ao_vivo(self) -> None:
+        """Seleciona só os itens sem indício de ao vivo/show (a razão nº 1)."""
+        from previa import analisar
+
+        escolhidos = []
+        eliminados = 0
+        for iid in self.lote_tree.get_children():
+            valores = self.lote_tree.item(iid, "values")
+            titulo = str(valores[1]) if len(valores) > 1 else ""
+            situacao = str(valores[3]) if len(valores) > 3 else ""
+            if "privado" in situacao or "removido" in situacao:
+                eliminados += 1
+                continue
+            if analisar(titulo).possivel_ao_vivo:
+                eliminados += 1
+                continue
+            escolhidos.append(iid)
+        self.lote_tree.selection_set(escolhidos)  # type: ignore[attr-defined]
+        self.lote_progresso_var.set(
+            f"{len(escolhidos)} selecionado(s); {eliminados} ficaram de fora "
+            "(ao vivo/show ou indisponível).")
+
+    def _urls_do_lote(self) -> list[str]:
+        """URLs escolhidas na lista + as coladas no campo de várias URLs."""
+        playlist = self._playlist_atual
+        escolhidos = list(self.lote_tree.selection())  # type: ignore[attr-defined]
+        urls: list[str] = []
+        if playlist is not None:
+            mapa = {str(item.indice): item for item in playlist.itens}
+            for iid in escolhidos:
+                item = mapa.get(str(iid))
+                if item is not None and item.disponivel:
+                    urls.append(item.url)
+        texto = self.lote_urls_text.get("1.0", "end") if hasattr(
+            self.lote_urls_text, "get") else ""
+        for linha in str(texto or "").splitlines():
+            linha = linha.strip()
+            if linha.startswith(("http://", "https://")) and linha not in urls:
+                urls.append(linha)
+        return urls
+
+    def _ao_baixar_lote(self) -> None:
+        urls = self._urls_do_lote()
+        if not urls:
+            messagebox.showinfo(
+                "Lote", "Selecione itens na lista ou cole URLs no campo abaixo.")
+            return
+        formato = self.formato_var.get()
+        if len(urls) > 5 and not messagebox.askyesno(
+                "Baixar em lote",
+                f"Baixar {len(urls)} item(ns) em {formato.upper()} agora?"):
+            return
+
+        def ao_item(posicao: int, total: int, referencia: str) -> None:
+            self._fila_eventos.put((
+                "lote", (posicao, total, str(referencia)[:60]), None))
+
+        def executar() -> list[tuple[str, bool, str]]:
+            return self.controlador.baixar_lote(urls, formato, ao_item=ao_item)
+
+        def concluir(resultados: list[tuple[str, bool, str]]) -> None:
+            self._finalizar_lote(resultados)
+
+        self.lote_progresso_var.set(f"Baixando {len(urls)} item(ns)...")
+        self._executar(executar, concluir, lambda erro: self._mostrar_erro(erro))
+
+    def _ao_enfileirar_lote(self) -> None:
+        urls = self._urls_do_lote()
+        if not urls:
+            messagebox.showinfo("Lote", "Selecione itens ou cole URLs primeiro.")
+            return
+        formato = self.formato_var.get()
+        for url in urls:
+            self.controlador.adicionar_fila(url, formato)
+        self._atualizar_fila()
+        self.lote_progresso_var.set(f"{len(urls)} item(ns) na fila.")
+        self._registrar(f"{len(urls)} item(ns) adicionados à fila.")
+
     # -- aba Prévia ---------------------------------------------------------
     def _montar_previa(self) -> None:
         """Ouvir/checar antes de baixar: evita show e versão errada."""
@@ -1271,8 +1654,54 @@ class AplicativoGrafico:
             variable=self.por_album_var).grid(
             row=9, column=0, columnspan=3, sticky="w", padx=6, pady=2)
 
+        manutencao = ttk.LabelFrame(
+            quadro, text="MANUTENÇÃO — atualizar o yt-dlp (quando parar de baixar)")
+        manutencao.pack(fill="x", padx=8, pady=4)
+        self.versao_ytdlp_var = tk.StringVar(
+            value=f"Versão em uso: {self._texto_versao_ytdlp()}")
+        ttk.Label(manutencao, textvariable=self.versao_ytdlp_var,
+                  wraplength=820, justify="left").grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=6, pady=(6, 2))
+        ttk.Button(manutencao, text="Atualizar o yt-dlp agora",
+                   command=self._ao_atualizar_ytdlp).grid(
+            row=1, column=0, sticky="w", padx=6, pady=(0, 6))
+        self.atualizacao_status_var = tk.StringVar(
+            value="Se o YouTube mudar e os downloads falharem, clique no botão "
+                  "acima (precisa de internet).")
+        ttk.Label(manutencao, textvariable=self.atualizacao_status_var,
+                  wraplength=820, justify="left").grid(
+            row=2, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 8))
+
         ttk.Button(quadro, text="Salvar configurações",
                    command=self._ao_salvar_config).pack(padx=8, pady=10, anchor="w")
+
+    def _texto_versao_ytdlp(self) -> str:
+        try:
+            versao = self.controlador.versao_ytdlp()
+        except Exception:
+            versao = ""
+        return versao or "não identificada"
+
+    def _ao_atualizar_ytdlp(self) -> None:
+        if not messagebox.askyesno(
+                "Atualizar o yt-dlp",
+                "Atualizar o yt-dlp agora? É preciso internet e o programa "
+                "continua funcionando se a atualização falhar."):
+            return
+        self.atualizacao_status_var.set("Atualizando (pode levar um minuto)...")
+        self._definir_status("Atualizando o yt-dlp...")
+
+        def concluir(resultado: Any) -> None:
+            self.atualizacao_status_var.set(resultado.mensagem)
+            self.versao_ytdlp_var.set(
+                f"Versão em uso: {resultado.versao_depois or 'não identificada'}")
+            self._definir_status(resultado.mensagem)
+            self._registrar(resultado.mensagem)
+            if not resultado.ok:
+                messagebox.showwarning("Atualizar o yt-dlp", resultado.mensagem)
+
+        self._executar(self.controlador.atualizar_ytdlp, concluir,
+                       lambda erro: self._mostrar_erro(erro))
 
     def _campo_diretorio(self, pai: Any, linha: int, rotulo: str,
                          variavel: Any) -> None:

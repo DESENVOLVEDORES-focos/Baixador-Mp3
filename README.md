@@ -36,6 +36,34 @@ em <https://ffmpeg.org/download.html> e coloque `ffmpeg.exe` em `ferramentas\`.
    aceitar, salva uma cópia com outro nome. A política pode ser mudada em
    Configurações (perguntar / pular / renomear / sobrescrever).
 
+### Playlists e vários vídeos (aba Lote / Playlist)
+
+Serve para baixar uma **playlist inteira** ou **escolher só alguns vídeos** dela:
+
+1. Cole a URL da playlist/álbum/canal e clique em **Listar**. Nada é baixado
+   nessa etapa: aparece a lista com duração e situação de cada item (itens
+   privados/removidos são marcados e ficam fora).
+2. Escolha o que baixar: **Ctrl+clique** / **Shift+clique**, ou
+   **Selecionar tudo**, ou **"Marcar sem ao vivo/show"** (descarta de uma vez o
+   que tem cara de gravação ao vivo, cover, versão estendida e remix).
+   Playlists longas avisam quantos itens ficaram fora do limite (200; o botão
+   *Listar mais* vai até 500).
+3. Clique em **Baixar selecionados** ou **Adicionar selecionados à fila**. Se
+   preferir tudo, use **Playlist inteira na fila**.
+
+Também é possível **colar várias URLs de uma vez** (uma por linha, no quadro de
+baixo ou no próprio campo de URL da aba Baixar): o programa mostra *item N de M*
+e, no fim, um resumo com o motivo de cada falha — **um link quebrado não
+interrompe os outros**.
+
+### Baixar de novo e manter o yt-dlp atualizado
+
+- **Histórico → Baixar de novo**: usa a URL original do que já foi baixado, mesmo
+  que o arquivo tenha sido apagado ou renomeado.
+- **Configurações → MANUTENÇÃO**: mostra a versão do yt-dlp e tem
+  **Atualizar o yt-dlp agora**. Se algum dia os downloads pararem de funcionar
+  ("Unable to extract..."), é o primeiro botão a clicar.
+
 ### Ouvir antes de baixar (aba Prévia)
 
 Música de **show** ou versão estendida não precisa mais ser descoberta depois do

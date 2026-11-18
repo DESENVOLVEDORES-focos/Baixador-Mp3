@@ -1,5 +1,66 @@
 # Changelog
 
+## 2026-11-17 — Playlist com seleção, lote e manutenção pela interface
+
+Pedido do usuário: *"poder baixar playlist, selecionar vários vídeos e outras
+coisas"* — sem quebrar o fluxo de prévia/identificação que já funcionava.
+
+### Novo: aba **Lote / Playlist**
+
+- **Listar sem baixar nada**: cole a URL de uma playlist, álbum ou canal e clique
+  em *Listar* (`--flat-playlist --skip-download --dump-single-json`). A lista
+  mostra número, título, duração e situação de cada item.
+- **Seleção múltipla de verdade**: Ctrl+clique e Shift+clique na tabela,
+  *Selecionar tudo* / *Limpar seleção*, e **"Marcar sem ao vivo/show"**, que
+  desmarca de uma vez tudo que tem indício de show, cover ou versão estendida
+  (usa o mesmo classificador da Prévia) e também os itens privados/removidos.
+- **Playlist inteira** ou **só os marcados**, tanto para *Baixar selecionados*
+  quanto para *Adicionar selecionados à fila* / *Playlist inteira na fila*.
+- **Colar várias URLs** (uma por linha) no mesmo quadro e baixar tudo de uma vez.
+  O campo de URL da aba Baixar também aceita várias linhas/linhas com vírgula.
+- **Limite honesto**: até 200 itens por listagem (botão *Listar mais* vai a 500).
+  Se a playlist for maior, a tela diz **quantos itens ficaram de fora** — nada de
+  fingir que listou tudo.
+- Item privado/removido aparece como *privado/removido* e é **pulado**, com motivo
+  registrado, em vez de derrubar o lote.
+- Progresso **item N de M** durante o lote, e resumo final
+  (*"Lote concluído: 28 com sucesso, 2 com falha"*) com o motivo de cada falha.
+
+### Corrigido: playlist era descartada
+
+- `--no-playlist` era fixo em todo download, então colar uma URL de playlist
+  baixava **só o primeiro vídeo**. Agora o padrão continua sendo baixar apenas o
+  vídeo escolhido (comportamento correto para a busca), mas com
+  `--yes-playlist` quando o usuário pede a playlist — explícito nos dois sentidos.
+- Cada item listado tem a URL **sem `&list=`**, para que baixar um item da
+  playlist não baixe a playlist inteira outra vez.
+
+### Novo: baixar de novo pelo Histórico
+
+- Selecione uma ou mais linhas do **Histórico** e clique em *Baixar de novo*: o
+  programa usa a URL original (mesmo que o arquivo tenha sido apagado ou o nome
+  mudado), com o mesmo resumo de lote.
+
+### Novo: atualizar o yt-dlp pela própria tela
+
+- Aba **Configurações → MANUTENÇÃO**: mostra a versão em uso e tem o botão
+  *Atualizar o yt-dlp agora*. É o conserto mais comum quando o YouTube muda e os
+  downloads começam a falhar ("Unable to extract...").
+- Atualiza só quando o yt-dlp é o pacote Python (instalação do `configurar.bat`);
+  se for um `yt-dlp.exe` na pasta `ferramentas`, **avisa** e diz onde baixar a
+  versão nova em vez de mexer no arquivo por baixo dos panos.
+- Confere a versão **depois** de atualizar: "já estava na mais nova", "atualizado
+  de X para Y" ou "não consegui confirmar" — sem declarar sucesso sem prova.
+
+### Testes
+
+- 243 testes (+52): `tests/test_playlist.py` (heurística de URL, comando sem
+  download, itens quebrados, truncamento, seleção por índice),
+  `tests/test_lote.py` (playlist inteira, falha isolada não para o lote,
+  `--no-playlist` x `--yes-playlist`) e `tests/test_atualizacao.py`
+  (versão, falha do pip, exe separado, comando sem shell), além dos novos botões
+  exercitados em `tests/test_interface_widgets.py`.
+
 ## 2026-11-17 — Chave de IA por arquivo (api.txt) e identificação com 6 campos
 
 Pedido do usuário: poder colocar a chave de API por **arquivo**, como já acontece

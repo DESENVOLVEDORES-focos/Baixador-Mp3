@@ -208,7 +208,8 @@ class Downloader:
     def construir_argumentos(self, url: str, formato: Formato,
                              saida: str | None = None,
                              politica: str | None = None,
-                             destino: Path | None = None) -> list[str]:
+                             destino: Path | None = None,
+                             playlist: bool = False) -> list[str]:
         """Monta argv sem shell; separar esta etapa facilita testes e auditoria."""
         url = validar_url(url)
         if formato not in ("mp3", "mp4"):
@@ -222,7 +223,9 @@ class Downloader:
         argumentos = [
             *cmd,
             "--ignore-config",
-            "--no-playlist",
+            # Playlist só quando o usuário pediu (listagem + seleção na tela):
+            # explícito nos dois sentidos para não depender do padrão do yt-dlp.
+            *(["--yes-playlist"] if playlist else ["--no-playlist"]),
             # Progresso máquina-legível (uma atualização por linha) para a
             # interface mostrar %/velocidade/ETA sem inventar nada.
             "--newline", "--progress",
@@ -281,6 +284,7 @@ class Downloader:
                ao_progresso: Callable[[Progresso], None] | None = None,
                politica: str | None = None,
                contexto: object = None,
+               _destino_forcado: Path | None = None,
                ) -> ResultadoDownload:
         """Baixa para uma pasta de trabalho e só então publica no destino.
 
@@ -298,7 +302,8 @@ class Downloader:
         """
         url = validar_url(url)
         self.config.preparar_diretorios()
-        destino = self.config.musicas if formato == "mp3" else self.config.videos
+        destino = _destino_forcado or (
+            self.config.musicas if formato == "mp3" else self.config.videos)
         inicio_dt = datetime.now(timezone.utc)
         iniciado = inicio_dt.isoformat()
         antes = self._fotografar(destino, formato)
@@ -361,6 +366,62 @@ class Downloader:
         finally:
             shutil.rmtree(trabalho, ignore_errors=True)
             self._limpar_residuos(destino, antes, None)
+
+    def baixar_playlist(self, url: str, formato: Formato,
+                        ao_progresso: Callable[[Progresso], None] | None = None,
+                        politica: str | None = None,
+                        ao_item: Callable[[int, int, str], None] | None = None,
+                        ) -> list[ResultadoDownload]:
+        """Baixa **todos** os itens de uma playlist/canal, uma vez cada.
+
+        Devolve um ``ResultadoDownload`` por item (inclusive os pulados), para
+        a interface e o histórico dizerem exatamente o que aconteceu. Cada item
+        passa pelo mesmo caminho de um download avulso: pasta de trabalho,
+        política de sobrescrita, nome organizado e publicação.
+        """
+        from playlist import listar
+
+        url = validar_url(url)
+        self.config.preparar_diretorios()
+        destino = self.config.musicas if formato == "mp3" else self.config.videos
+        lista = listar(url, config=self.config)
+        total = len(lista.itens)
+        resultados: list[ResultadoDownload] = []
+        for posicao, item in enumerate(lista.itens, start=1):
+            if ao_item is not None:
+                try:
+                    ao_item(posicao, total, item.titulo)
+                except Exception:  # callback da interface nunca derruba o lote
+                    pass
+            if not item.disponivel:
+                resultados.append(ResultadoDownload(
+                    url=item.url, formato=formato, caminho=None,
+                    iniciado_em=datetime.now(timezone.utc).isoformat(),
+                    finalizado_em=datetime.now(timezone.utc).isoformat(),
+                    pulado=True,
+                    motivo="Item indisponível na playlist (privado/removido).",
+                ))
+                continue
+            try:
+                resultados.append(self.baixar(
+                    item.url, formato, ao_progresso=ao_progresso,
+                    politica=politica, contexto=item,
+                    _destino_forcado=destino))
+            except ErroDownload as erro:
+                resultados.append(ResultadoDownload(
+                    url=item.url, formato=formato, caminho=None,
+                    iniciado_em=datetime.now(timezone.utc).isoformat(),
+                    finalizado_em=datetime.now(timezone.utc).isoformat(),
+                    pulado=False, motivo=str(erro),
+                ))
+            except Exception as erro:  # um item quebrado não para a playlist
+                resultados.append(ResultadoDownload(
+                    url=item.url, formato=formato, caminho=None,
+                    iniciado_em=datetime.now(timezone.utc).isoformat(),
+                    finalizado_em=datetime.now(timezone.utc).isoformat(),
+                    pulado=False, motivo=f"Falha inesperada: {erro}",
+                ))
+        return resultados
 
     def _publicar(self, produzido: Path, destino: Path, politica: str,
                   contexto: object = None) -> Path:

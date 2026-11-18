@@ -134,6 +134,35 @@ class Aplicacao:
             self.ultimo_diagnostico = diagnostico
             return False, diagnostico.texto
 
+    def listar_playlist(self, url: str, limite: int = 200) -> Any:
+        """Lista os itens de uma playlist/canal sem baixar mídia."""
+        from playlist import listar
+
+        return listar(url, limite=limite, config=self.config)
+
+    def baixar_varios(self, urls: list[str], formato: str,
+                      ao_progresso: Any = None,
+                      politica: str | None = None,
+                      ao_item: Any = None,
+                      ) -> list[tuple[str, bool, str]]:
+        """Baixa uma lista de URLs, um por um, **sem parar no primeiro erro**.
+
+        Devolve ``[(url, sucesso, mensagem), ...]`` na mesma ordem recebida.
+        Usado pela seleção múltipla e pela fila de playlist da interface.
+        """
+        resumo: list[tuple[str, bool, str]] = []
+        total = len(urls)
+        for posicao, url in enumerate(urls, start=1):
+            if callable(ao_item):
+                try:
+                    ao_item(posicao, total, url)
+                except Exception:
+                    pass
+            ok, mensagem = self.baixar(
+                url, formato, ao_progresso=ao_progresso, politica=politica)
+            resumo.append((url, ok, mensagem))
+        return resumo
+
     def _resumo_da_identificacao(self) -> dict:
         """Resumo do processador de metadados (confirmado + erros de API)."""
         processador = getattr(self.metadados, "processador_real", None)

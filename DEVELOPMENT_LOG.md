@@ -1,4 +1,46 @@
 
+## 2026-11-17 — Playlist, lote e manutenção (pedido "baixar playlist e vários vídeos")
+
+### Auditoria que motivou o trabalho
+- `downloader.py` passava `--no-playlist` fixo: URL de playlist baixava 1 vídeo.
+- A busca já listava até 25 resultados, mas a tabela era `selectmode="browse"`:
+  impossível escolher mais de um para baixar.
+- Não havia caminho para listar uma playlist sem baixar, nem "item N de M".
+- Nada na tela informava a versão do yt-dlp nem permitia atualizá-lo — a causa
+  mais comum de "parou de baixar" — e o histórico só servia para olhar.
+
+### O que foi feito (validado, não só escrito)
+- `playlist.py`: listagem pura (`--flat-playlist --playlist-end N
+  --skip-download --dump-single-json`), tolerante a itens quebrados; cada item
+  tem URL **sem `list=`**; `Playlist.restantes` informa quantos ficaram fora.
+- `downloader.py`: `construir_argumentos(..., playlist=False)` com
+  `--yes-playlist` explícito; `baixar_playlist()` devolve um resultado por item,
+  pula indisponíveis e **não interrompe o lote** em falha isolada.
+- `musica.py`: `listar_playlist()` e `baixar_varios()`, que devolvem
+  `[(url, sucesso, mensagem)]` na ordem pedida.
+- `interface.py`: aba **Lote / Playlist** (tabela com Ctrl/Shift, marcar sem ao
+  vivo, playlist inteira na fila, colar N URLs), seleção múltipla na aba Baixar,
+  campo de URL aceitando várias linhas, **Baixar de novo** no Histórico e quadro
+  de **manutenção do yt-dlp** nas Configurações.
+- `atualizacao.py`: atualização por `pip` sem shell, com verificação da versão
+  antes/depois e recusa explícita quando o yt-dlp é um `.exe` separado.
+
+### Como foi testado
+- `pytest`: **243 passed, 1 skipped, 33 subtests**; `pyflakes` limpo.
+- Fluxos reais com mídia servida em `http.server` local: 3 URLs coladas de uma
+  vez → 3 MP3; playlist montada com item ao vivo + privado →
+  "2 selecionado(s); 2 ficaram de fora" e 2 MP3 baixados de verdade;
+  "Playlist inteira na fila" → 2 pendentes (privado fora).
+- Interface construída e exercitada com Tk simulado (sem Tkinter no sandbox),
+  incluindo os botões novos: listar, marcar sem ao vivo, rebaixar do histórico e
+  atualizar o yt-dlp.
+
+### O que a interface ainda **não** faz (honestidade)
+- Download em paralelo (o lote é sequencial: previsível e sem brigar por CPU).
+- Retomada entre execuções (o yt-dlp já usa `.part`; não há botão "continuar").
+- Filtro de duração máxima e escolha de qualidade por item.
+- Listar canal com paginação além do limite (200/500 itens).
+
 ## 2026-11-17 — Etapa A/B (IA 3): auditoria executada, correções e interface utilizável
 
 ### Método (diferente das etapas anteriores)
