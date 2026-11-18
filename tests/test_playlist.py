@@ -231,3 +231,213 @@ class TestListarSemBaixar(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestResumoDaPlaylist(unittest.TestCase):
+    """A tela precisa dizer o que tem na playlist antes de baixar."""
+
+    @staticmethod
+    def _item(indice, titulo, duracao=200, disponivel=True):
+        from playlist import ItemPlaylist
+
+        return ItemPlaylist(indice=indice, id=f"id{indice}", titulo=titulo,
+                            url=f"https://youtu.be/id{indice}",
+                            duracao=duracao, disponivel=disponivel)
+
+    def test_conta_disponiveis_e_privados(self):
+        from playlist import analisar
+
+        resumo = analisar([self._item(1, "A"), self._item(2, "B"),
+                           self._item(3, "Privada", disponivel=False)])
+        self.assertEqual((resumo.quantidade, resumo.disponiveis,
+                          resumo.indisponiveis), (3, 2, 1))
+
+    def test_soma_duracao_total_e_dos_disponiveis(self):
+        from playlist import analisar
+
+        resumo = analisar([self._item(1, "A", 200), self._item(2, "B", 100),
+                           self._item(3, "C", 999, disponivel=False)])
+        self.assertEqual(resumo.duracao_total, 1299)
+        self.assertEqual(resumo.duracao_disponivel, 300)
+
+    def test_acha_repetido_pelo_titulo_normalizado(self):
+        from playlist import analisar
+
+        resumo = analisar([self._item(1, "Faixa A (Official Video)"),
+                           self._item(2, "FAIXA A"),
+                           self._item(3, "Outra")])
+        self.assertEqual(resumo.duplicados, 1)
+
+    def test_privado_nao_conta_como_repetido_duplicado(self):
+        from playlist import analisar
+
+        resumo = analisar([self._item(1, "A"),
+                           self._item(2, "A", disponivel=False)])
+        self.assertEqual(resumo.duplicados, 0)
+        self.assertEqual(resumo.indisponiveis, 1)
+
+    def test_texto_do_resumo_e_honesto(self):
+        from playlist import analisar
+
+        resumo = analisar([self._item(1, "A", 3600),
+                           self._item(2, "B", 1200, disponivel=False)])
+        texto = resumo.como_texto()
+        self.assertIn("2 item(ns)", texto)
+        self.assertIn("1 h 20 min", texto)   # 3600 + 1200 s
+        self.assertIn("1 privado/removido", texto)
+
+    def test_playlist_vazia_nao_quebra(self):
+        from playlist import analisar
+
+        resumo = analisar([])
+        self.assertEqual(resumo.quantidade, 0)
+        self.assertEqual(resumo.como_texto(), "0 item(ns)")
+
+    def test_nada_e_removido_pela_analise(self):
+        itens = [self._item(1, "A"), self._item(2, "A")]
+        from playlist import analisar
+
+        analisar(itens)
+        self.assertEqual(len(itens), 2)
+
+
+class TestVisualizacaoDePlaylistNaTela(unittest.TestCase):
+    """Resumo, marcação só do disponível e "salvar na biblioteca"."""
+
+    @classmethod
+    def setUpClass(cls):
+        import os
+        import sys
+
+        from unittest.mock import patch as _patch
+
+        from tests.test_central_app import _instalar_tk_falso
+
+        cls._env = _patch.dict(os.environ)
+        cls._env.start()
+        _instalar_tk_falso()
+        cls._temp = tempfile.TemporaryDirectory()
+        raiz = Path(cls._temp.name)
+        os.environ["BAIXADOR_DATA_DIR"] = str(raiz / ".baixador")
+        (raiz / "Musicas").mkdir(exist_ok=True)
+        (raiz / "ferramentas").mkdir(exist_ok=True)
+        for modulo in ("central_app", "central", "central_servicos"):
+            sys.modules.pop(modulo, None)
+        import central_app
+        from central import Central
+        from configuracoes import Configuracoes
+        from preferencias import Preferencias
+
+        cls.modulo = central_app
+        cls.central = Central(
+            Configuracoes(raiz=raiz, diretorio_musicas=raiz / "Musicas"),
+            Preferencias(metadados_ativos=False, buscar_capas=False,
+                         sincronizar_ao_abrir=False))
+        cls.central.ffplay = []
+        cls.app = central_app.CentralApp(cls.central, raiz=central_app.tk.Tk())
+        cls.app.mostrar("pesquisar")
+
+    @classmethod
+    def tearDownClass(cls):
+        import sys
+
+        cls._temp.cleanup()
+        cls._env.stop()
+        for modulo in list(sys.modules):
+            if modulo.startswith("tkinter"):
+                sys.modules.pop(modulo, None)
+        for modulo in ("central_app", "central", "central_servicos"):
+            sys.modules.pop(modulo, None)
+
+    def _playlist(self, quantidade=3):
+        from playlist import ItemPlaylist, Playlist
+
+        itens = tuple(
+            ItemPlaylist(indice=i, id=f"id{i}", titulo=f"Faixa {i}",
+                         url=f"https://youtu.be/id{i}", duracao=200,
+                         disponivel=(i != 3))
+            for i in range(1, quantidade + 1))
+        return Playlist(titulo="Minha lista", url="https://y/l",
+                        itens=itens, total_informado=quantidade)
+
+    def test_abrir_mostra_resumo_e_marca_so_o_disponivel(self):
+        playlist = self._playlist()
+        with patch.object(self.app, "_executar",
+                          side_effect=lambda trabalho, concluir=None, falhar=None:
+                          concluir(trabalho()) if concluir else trabalho()), \
+                patch.object(self.central, "listar_playlist",
+                             return_value=playlist), \
+                patch.object(self.app, "_resultados",
+                             [type("R", (), {"eh_playlist": True, "url": "https://y/l",
+                                             "titulo": "Minha lista"})()],
+                             create=True):
+            self.app.arvore_resultados.selection_set = lambda *a: None
+            with patch.object(self.app, "_indices_selecionados", return_value=[0]):
+                self.app._abrir_playlist_selecionada()
+        self.assertIn("3 item(ns)", self.app.playlist_resumo_var.get())
+        self.assertIn("1 privado/removido", self.app.playlist_resumo_var.get())
+
+    def test_marcar_disponiveis_pula_privado(self):
+        self.app._playlist_aberta = self._playlist()
+        self.app._preencher_playlist(self.app._playlist_aberta)
+        self.app._marcar_disponiveis()
+        self.assertEqual(sorted(self.app.arvore_playlist.selection()),
+                         ["1", "2"])
+        self.assertIn("privado/removido", self.app.status_var.get())
+
+    def test_salvar_playlist_aberta_sem_baixado_avisa(self):
+        self.app._playlist_aberta = self._playlist()
+        with patch.object(self.central, "criar_playlist") as criar, \
+                patch.object(self.app, "notificar") as notificar, \
+                patch.object(self.modulo, "simpledialog") as simples:
+            simples.askstring.return_value = "Minha lista"
+            self.app._salvar_playlist_aberta()
+        criar.assert_not_called()
+        self.assertIn("Nenhum item", notificar.call_args[0][1])
+
+    def test_salvar_playlist_aberta_guarda_so_o_que_existe(self):
+        from biblioteca import Musica
+
+        self.app._playlist_aberta = self._playlist()
+        musicas = []
+        for indice in (1, 2):
+            musicas.append(Musica(
+                id=indice, caminho=f"/tmp/{indice}.mp3", titulo=f"Faixa {indice}",
+                artista="A", album="", ano="", genero="", faixa="",
+                duracao=200.0, tamanho=10, tem_capa=False, favorito=False,
+                origem_url=f"https://youtu.be/id{indice}",
+                adicionada_em="", atualizada_em=""))
+        with patch.object(self.central.biblioteca, "listar", return_value=musicas), \
+                patch.object(self.central, "criar_playlist", return_value=7) as criar, \
+                patch.object(self.central, "adicionar_a_playlist",
+                             return_value=2) as adicionar, \
+                patch.object(self.modulo, "simpledialog") as simples, \
+                patch.object(self.app, "_atualizar_fila"):
+            simples.askstring.return_value = "Minha lista"
+            self.app._salvar_playlist_aberta()
+        criar.assert_called_once_with("Minha lista")
+        self.assertEqual(sorted(adicionar.call_args[0][1]), [1, 2])
+        self.assertIn("2 música(s)", self.app.status_var.get())
+
+    def test_ver_o_que_ja_tenho_sem_nada_avisa(self):
+        self.app._playlist_aberta = self._playlist()
+        with patch.object(self.central.biblioteca, "listar", return_value=[]), \
+                patch.object(self.app, "notificar") as notificar:
+            self.app._ver_o_que_ja_tenho()
+        self.assertIn("Nenhum dos 3", notificar.call_args[0][1])
+
+    def test_ver_o_que_ja_tenho_lista_os_meus(self):
+        from biblioteca import Musica
+
+        self.app._playlist_aberta = self._playlist()
+        minha = Musica(id=1, caminho="/tmp/1.mp3", titulo="Faixa 1", artista="A",
+                       album="", ano="", genero="", faixa="", duracao=200.0,
+                       tamanho=10, tem_capa=False, favorito=False,
+                       origem_url="https://youtu.be/id1",
+                       adicionada_em="", atualizada_em="")
+        with patch.object(self.central.biblioteca, "listar", return_value=[minha]), \
+                patch.object(self.app, "notificar") as notificar:
+            self.app._ver_o_que_ja_tenho()
+        texto = notificar.call_args[0][1]
+        self.assertIn("1 de 3", texto)
+        self.assertIn("Faixa 1", texto)

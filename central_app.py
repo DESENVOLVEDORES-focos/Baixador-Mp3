@@ -1561,6 +1561,18 @@ class CentralApp:
                    command=self._filtrar_ao_vivo_playlist).pack(side="right", padx=4)
         ttk.Button(linha, text="Listar mais",
                    command=self._listar_mais_itens).pack(side="right", padx=4)
+        self.playlist_resumo_var = tk.StringVar(
+            value="Abra uma playlist nos resultados para ver o resumo.")
+        ttk.Label(quadro, textvariable=self.playlist_resumo_var,
+                  style="Fraco.TLabel").pack(anchor="w", padx=8)
+        linha2 = ttk.Frame(quadro)
+        linha2.pack(fill="x", padx=6, pady=(2, 4))
+        ttk.Button(linha2, text="Marcar só os disponíveis",
+                   command=self._marcar_disponiveis).pack(side="left")
+        ttk.Button(linha2, text="Salvar na biblioteca",
+                   command=self._salvar_playlist_aberta).pack(side="left", padx=6)
+        ttk.Button(linha2, text="Ver o que já tenho",
+                   command=self._ver_o_que_ja_tenho).pack(side="left")
         self.arvore_playlist = ttk.Treeview(
             quadro, columns=("n", "titulo", "duracao", "situacao", "observacao"),
             show="headings", height=7, selectmode="extended")
@@ -1738,6 +1750,10 @@ class CentralApp:
                 aprovados.append(str(item.indice))
         if aprovados:
             self.arvore_playlist.selection_set(aprovados)
+        from playlist import analisar
+
+        resumo = analisar(playlist.itens)
+        self.playlist_resumo_var.set(resumo.como_texto())
         fora = len(playlist.itens) - len(aprovados)
         if fora:
             self.definir_status(
@@ -1828,6 +1844,74 @@ class CentralApp:
                        + (f", {ignorados} repetida(s)" if ignorados else "")
                        + f". Total: {self.central.selecao.quantidade()}.")
         self._atualizar_contador_cesta()
+
+    def _marcar_disponiveis(self) -> None:
+        """Marca só o que existe: privado/removido não entra na cesta."""
+        playlist = self._playlist_aberta
+        if playlist is None:
+            messagebox.showinfo("Playlist", "Abra uma playlist primeiro.")
+            return
+        disponiveis = [str(item.indice) for item in playlist.itens
+                       if item.disponivel]
+        self.arvore_playlist.selection_set(
+            [iid for iid in disponiveis if self.arvore_playlist.exists(iid)])
+        fora = len(playlist.itens) - len(disponiveis)
+        self.definir_status(
+            f"{len(disponiveis)} item(ns) disponível(is) marcado(s)"
+            + (f"; {fora} privado/removido ficou de fora." if fora else "."))
+
+    def _ver_o_que_ja_tenho(self) -> None:
+        """Diz quantos itens da playlist aberta já estão na biblioteca."""
+        playlist = self._playlist_aberta
+        if playlist is None:
+            messagebox.showinfo("Playlist", "Abra uma playlist primeiro.")
+            return
+        urls = {m.origem_url for m in self.central.biblioteca.listar()
+                if m.origem_url}
+        meus = [item for item in playlist.itens if item.url in urls]
+        if not meus:
+            self.notificar(
+                "Playlist",
+                f"Nenhum dos {playlist.quantidade} item(ns) desta playlist já "
+                "está na sua biblioteca.")
+            return
+        linhas = "\n".join(f"• {item.titulo}" for item in meus[:12])
+        extra = (f"\n... e mais {len(meus) - 12}." if len(meus) > 12 else "")
+        self.notificar(
+            "Playlist",
+            f"{len(meus)} de {playlist.quantidade} já estão na biblioteca:\n"
+            f"{linhas}{extra}")
+
+    def _salvar_playlist_aberta(self) -> None:
+        """Guarda a playlist do YouTube como playlist local (só o que existe)."""
+        playlist = self._playlist_aberta
+        if playlist is None:
+            messagebox.showinfo("Playlist", "Abra uma playlist primeiro.")
+            return
+        nome = simpledialog.askstring(
+            "Salvar na biblioteca", "Nome da playlist local:",
+            initialvalue=playlist.titulo[:60] or "Playlist do YouTube",
+            parent=self.raiz)
+        if not nome or not str(nome).strip():
+            return
+        urls = {m.origem_url: m.id for m in self.central.biblioteca.listar()
+                if m.origem_url}
+        ids = [urls[item.url] for item in playlist.itens if item.url in urls]
+        if not ids:
+            self.notificar(
+                "Playlist",
+                "Nenhum item desta playlist já foi baixado, então não há "
+                "música para guardar. A playlist local só guarda músicas que "
+                "estão na biblioteca.", erro=True)
+            return
+        nova = self.central.criar_playlist(str(nome).strip())
+        adicionadas = self.central.adicionar_a_playlist(nova, ids)
+        self.definir_status(
+            f"Playlist \"{nome}\" criada com {adicionadas} música(s) da "
+            f"playlist aberta"
+            + (f"; {playlist.quantidade - len(ids)} item(ns) ainda não baixado(s) "
+               "ficaram fora." if playlist.quantidade > len(ids) else "."))
+        self._atualizar_fila()
 
     def _previa_selecionada(self) -> None:
         indices = self._indices_selecionados(self.arvore_resultados)

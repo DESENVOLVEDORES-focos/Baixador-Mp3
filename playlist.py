@@ -16,7 +16,7 @@ import logging
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 from configuracoes import CONFIG, Configuracoes, argumentos_cookies
 
@@ -295,3 +295,80 @@ __all__ = [
     "PASSO_PADRAO", "Playlist", "construir_comando", "listar", "listar_mais",
     "montar_playlist", "parece_playlist", "selecionar",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Análise do que está na playlist (para a tela mostrar antes de baixar)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ResumoPlaylist:
+    """O que o usuário precisa saber antes de marcar o que baixar."""
+
+    quantidade: int
+    disponiveis: int
+    indisponiveis: int
+    duracao_total: int
+    duracao_disponivel: int
+    duplicados: int
+    primeira: str = ""
+    ultima: str = ""
+
+    def como_texto(self) -> str:
+        """Frase curta e honesta (sem número estimado se não foi medido)."""
+        partes = [f"{self.quantidade} item(ns)"]
+        if self.duracao_total:
+            partes.append(f"~{_minutos(self.duracao_total)} no total")
+        if self.indisponiveis:
+            partes.append(f"{self.indisponiveis} privado/removido")
+        if self.duplicados:
+            partes.append(f"{self.duplicados} repetido(s) na lista")
+        return " · ".join(partes)
+
+
+def _minutos(segundos: int) -> str:
+    horas, resto = divmod(max(0, int(segundos)), 3600)
+    minutos = resto // 60
+    return f"{horas} h {minutos:02d} min" if horas else f"{minutos} min"
+
+
+def _titulo_equivalente(titulo: str) -> str:
+    import unicodedata
+
+    base = unicodedata.normalize("NFKD", (titulo or "").casefold())
+    base = "".join(c for c in base if not unicodedata.combining(c))
+    base = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", base)
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", base).split())
+
+
+def analisar(itens: Iterable[Any]) -> ResumoPlaylist:
+    """Resume a playlist aberta: quantos, quanto tempo, quantos repetidos.
+
+    "Repetido" é o mesmo título normalizado aparecendo duas vezes na mesma
+    playlist (coisa comum em playlist de usuário). Nada é removido aqui — o
+    número só é mostrado para o usuário decidir.
+    """
+    lista = list(itens or [])
+    disponiveis = [item for item in lista if getattr(item, "disponivel", True)]
+    vistos: set[str] = set()
+    duplicados = 0
+    for item in disponiveis:
+        chave = _titulo_equivalente(getattr(item, "titulo", ""))
+        if not chave:
+            continue
+        if chave in vistos:
+            duplicados += 1
+        else:
+            vistos.add(chave)
+    return ResumoPlaylist(
+        quantidade=len(lista),
+        disponiveis=len(disponiveis),
+        indisponiveis=len(lista) - len(disponiveis),
+        duracao_total=sum(getattr(item, "duracao", 0) or 0 for item in lista),
+        duracao_disponivel=sum(getattr(item, "duracao", 0) or 0
+                               for item in disponiveis),
+        duplicados=duplicados,
+        primeira=getattr(lista[0], "titulo", "") if lista else "",
+        ultima=getattr(lista[-1], "titulo", "") if lista else "",
+    )
