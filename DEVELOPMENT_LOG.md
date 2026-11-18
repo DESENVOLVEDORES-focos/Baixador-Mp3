@@ -208,3 +208,15 @@
   `Videos/Video Clip - Cena Legal.mp4`, segundo download do mesmo item
   **pulado**, 404 → "O endereço não existe mais…", subpasta
   `Musicas/Queen/A Night at the Opera/` quando há álbum confirmado.
+
+### Cookies: verificação de ponta a ponta
+- `importar_cookies` → status → `argumentos_cookies` conferidos com um
+  `cookies.txt` Netscape real: a cópia vai para `.baixador\cookies.txt`, o
+  status mostra `3 cookie(s), 3 do YouTube/Google` e o yt-dlp recebe
+  `--cookies <caminho>`. Download real de `.m4a` → MP3 concluído com essa flag.
+- A contagem "do YouTube" inclui `google.com` de propósito (cookies de sessão
+  do Google são necessários junto com os do YouTube).
+- Defeito encontrado no uso: arquivo largado na pasta do programa era ignorado.
+  `resolver_cookies` passou a considerá-lo e `status` também.
+- Teste de regressão: `TestCookiesNaPasta` (3 casos: solto na pasta, inválido,
+  ausente).

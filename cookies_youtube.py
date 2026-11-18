@@ -133,6 +133,16 @@ def status(config: Configuracoes = CONFIG) -> InfoCookies:
     candidato = Path(explicito).expanduser() if explicito else destino
     if candidato.is_file():
         destino, configurado = candidato, True
+    else:
+        # Arquivo solto na pasta do programa (sem passar pela interface).
+        resolver = getattr(config, "resolver_cookies", None)
+        if callable(resolver):
+            try:
+                achado = resolver()
+            except Exception:
+                achado = None
+            if achado is not None:
+                destino, configurado = Path(achado), True
     if not configurado:
         return InfoCookies(False, None, False, mensagem="Nenhum cookies.txt configurado.")
     try:

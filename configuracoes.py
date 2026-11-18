@@ -58,7 +58,10 @@ class Configuracoes:
         ambiente = os.environ.get("BAIXADOR_COOKIES", "").strip()
         if ambiente:
             candidatos.append(Path(ambiente).expanduser())
+        # Cópia gerenciada pela interface e também o arquivo solto na pasta do
+        # programa: quem baixa o cookies.txt do navegador costuma deixá-lo ali.
         candidatos.append(self.dados / "cookies.txt")
+        candidatos.append(self.raiz / "cookies.txt")
         for candidato in candidatos:
             try:
                 if candidato.is_file():

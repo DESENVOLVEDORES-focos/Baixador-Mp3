@@ -291,6 +291,57 @@ class TestLimpezaDeNome(unittest.TestCase):
                          "Queen - Song.mp3")
 
 
+class TestCookiesNaPasta(unittest.TestCase):
+    """Quem baixa cookies.txt do navegador costuma deixá-lo na pasta do app."""
+
+    def _status(self, montar):
+        from configuracoes import Configuracoes
+        from cookies_youtube import status
+
+        dados = tempfile.TemporaryDirectory()
+        self.addCleanup(dados.cleanup)
+        os.environ["BAIXADOR_DATA_DIR"] = dados.name
+        self.addCleanup(os.environ.pop, "BAIXADOR_DATA_DIR", None)
+        antigo = os.environ.pop("BAIXADOR_COOKIES", None)
+        if antigo is not None:
+            self.addCleanup(os.environ.__setitem__, "BAIXADOR_COOKIES", antigo)
+        raiz = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, raiz, True)
+        montar(raiz)
+        config = Configuracoes(raiz=raiz)
+        return config, status(config)
+
+    def test_cookies_solto_na_pasta_do_programa_e_aceito(self):
+        from configuracoes import argumentos_cookies
+
+        def montar(raiz):
+            (raiz / "cookies.txt").write_text(
+                "# Netscape HTTP Cookie File\n"
+                ".youtube.com\tTRUE\t/\tTRUE\t1999999999\tSID\tabc\n",
+                encoding="utf-8")
+
+        config, info = self._status(montar)
+        self.assertTrue(info.configurado)
+        self.assertTrue(info.valido)
+        self.assertIn("--cookies", argumentos_cookies(config))
+
+    def test_arquivo_invalido_nao_e_aceito_em_silencio(self):
+        def montar(raiz):
+            (raiz / "cookies.txt").write_text("lixo\nqualquer\n", encoding="utf-8")
+
+        _, info = self._status(montar)
+        self.assertTrue(info.configurado)
+        self.assertFalse(info.valido)
+        self.assertIn("Formato incompatível", info.mensagem)
+
+    def test_sem_cookies_nao_passa_a_flag(self):
+        from configuracoes import argumentos_cookies
+
+        config, info = self._status(lambda raiz: None)
+        self.assertFalse(info.configurado)
+        self.assertEqual(argumentos_cookies(config), [])
+
+
 class TestContextoMidia(unittest.TestCase):
     def test_a_partir_de_resultado_de_pesquisa(self):
         resultado = SimpleNamespace(titulo="Faixa", canal="Canal", duracao=210,

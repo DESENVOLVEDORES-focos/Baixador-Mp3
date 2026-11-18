@@ -44,7 +44,8 @@ em <https://ffmpeg.org/download.html> e coloque `ffmpeg.exe` em `ferramentas\`.
 - **Cookies do YouTube**: importe seu `cookies.txt` (formato Netscape). Ele é
   validado, copiado para `.baixador\cookies.txt` e usado automaticamente pelo
   yt-dlp em pesquisas e downloads, sem pedir de novo. Nunca é enviado a
-  terceiros, nunca aparece em logs e está no `.gitignore`.
+  terceiros, nunca aparece em logs e está no `.gitignore`. Também funciona se
+  você simplesmente deixar o `cookies.txt` na pasta do programa.
 - **Downloads**: pastas de MP3/MP4, formato e qualidade padrão, número de
   resultados, política de sobrescrita, metadados/capas ligados ou desligados.
 - **Nome dos arquivos**: por padrão salva como `Artista - Título.mp3`, sem

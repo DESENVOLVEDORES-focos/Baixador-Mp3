@@ -43,12 +43,24 @@ FFmpeg 9.0.2 + Mutagen, mídia servida por HTTP local).
 - **Histórico e `erros.jsonl`** gravam URL e mensagem sanitizadas (credenciais
   fora dos logs).
 
+### Cookies do YouTube
+
+- O `cookies.txt` pode ser importado pela aba **Configurações** (botão
+  "Selecionar cookies.txt..."), que valida o formato Netscape, copia para
+  `.baixador\cookies.txt` (fora do Git) e mostra quantidade e data de importação.
+- **Agora também é aceito** o arquivo deixado diretamente na pasta do programa
+  (`cookies.txt` ao lado de `iniciar.bat`), sem passar pela interface — era o
+  caso mais comum de "coloquei o arquivo e nada aconteceu". Um arquivo em
+  formato inválido continua sendo recusado com mensagem clara.
+- O `--cookies` é passado ao yt-dlp em downloads **e** pesquisas; o conteúdo
+  nunca é exibido, registrado em log nem versionado.
+
 ### Testes
 
 - `tests/test_organizacao_contexto.py`: 31 testes cobrindo saneamento de nome,
   limpeza de ruído, cauda técnica, precedência de nome na publicação, subpastas
   com/sem dados, colisão, `ContextoMidia` e classificador de erros.
-- Suíte completa: **128 passed, 1 skipped**; `pyflakes` limpo.
+- Suíte completa: **131 passed, 1 skipped**; `pyflakes` limpo.
 - Validação manual real: MP3 (`.m4a` → MP3, tags aplicadas), MP4 320x240,
   repetição do mesmo item (pulado, sem sobrescrever), 404 com mensagem em
   português e organização em `Musicas/Queen/A Night at the Opera/`.
