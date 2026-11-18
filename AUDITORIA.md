@@ -302,3 +302,46 @@ Legenda: ✅ atende e foi verificado · 🟡 atende em parte · ❌ não atende
 
 Os prompts prontos para comandar cada IA, incluindo o texto de "definição de pronto" e o que é
 proibido, estão em **[`COMANDOS.md`](COMANDOS.md)**.
+
+---
+
+## 10. Checklist do pacote `Central_MP3_Teste.zip` (para você marcar no Windows)
+
+O pacote foi gerado a partir do projeto **sem** `.git`, `.venv`, `__pycache__`,
+bancos, logs, `api.txt`, `cookies.txt` ou chaves. Foi extraído numa pasta limpa
+e revalidado ali: **578 testes + 94 subtestes** passando e os **35 módulos**
+importando. `pyflakes` limpo.
+
+### Já verificado aqui (Linux, sem Tkinter, sem rede externa)
+
+- [x] suíte completa a partir da pasta **extraída** do ZIP
+- [x] todos os módulos importam com um Python só com `requirements-dev.txt`
+- [x] `python main.py --versao` e `--ajuda` respondem
+- [x] MP3 real do FFmpeg: verificação, duração, ID3 estendido, ReplayGain
+- [x] biblioteca SQLite: adicionar, buscar sem acento, filtros, facetas,
+      playlists, favoritos, persistência entre instâncias
+- [x] cesta acumulativa: adicionar, reordenar, desfazer, buscar, formato, salvar
+      como playlist
+- [x] fila: estados, pausar/retomar/cancelar, retomada da sessão anterior
+- [x] reprodutor: montagem do comando, seek (`-ss`), fila, volume e estado
+      salvo/relido
+- [x] os **96 botões** das 10 páginas executados sem exceção
+- [x] deduplicação da pesquisa e limites (teto de duração/ao vivo)
+
+### Falta confirmar no seu Windows (marque conforme testar)
+
+- [ ] `configurar.bat` instala as dependências e baixa `yt-dlp.exe`/`ffmpeg.exe`
+- [ ] `iniciar.bat` abre a Central **sem** janela de console (`pythonw`)
+- [ ] a janela abre no seu monitor (tema escuro/claro, fonte pequena/normal/grande)
+- [ ] pesquisa real no YouTube traz vídeos **e** playlists
+- [ ] abrir uma playlist grande e usar "Listar mais" até o fim
+- [ ] download real de MP3 com **capa** (e de MP4)
+- [ ] identificação real (iTunes/MusicBrainz/Deezer) preenchendo álbum/ano
+- [ ] chave de IA importada por `api.txt`: "Testar chave" e uma identificação
+- [ ] `cookies.txt` importado: baixar um vídeo que exige login
+- [ ] **ouvir** uma música pelo player (▶) e pular pela barra
+- [ ] fechar e reabrir: biblioteca, cesta, playlists, volume e última fila
+- [ ] botão **Mensagens** mostrando o que aconteceu e `dados\app.log` existindo
+
+Se algum item falhar, o log útil é o do botão **Mensagens** (ou
+`dados\app.log`), que já vem com a mensagem em português.

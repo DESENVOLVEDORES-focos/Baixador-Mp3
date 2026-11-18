@@ -2,6 +2,11 @@
 
 Guia de 5 minutos. Sem terminal, sem editar código.
 
+> **Pacote `Central_MP3_Teste.zip`:** extraia e dê dois cliques em
+> `iniciar.bat`. Se for a primeira vez, rode `configurar.bat` antes (precisa de
+> internet). O pacote já vem com tudo — nenhuma chave, cookie ou banco pessoal
+> está incluído.
+
 ---
 
 ## 1. Instalar (só na primeira vez — precisa de internet)
@@ -50,7 +55,26 @@ você aceitar, salva uma cópia com outro nome. Para mudar o padrão:
 ⚠️ O `cookies.txt` é uma credencial da sua conta: fica só no seu PC (`.baixador\`),
 nunca é enviado a outros serviços e nunca deve ser compartilhado ou commitado.
 
-## 5. Se algo der errado
+## 5. O que dá para fazer na Central Musical
+
+| Quero… | Onde |
+|---|---|
+| Pesquisar sem colar link | **Pesquisar** → digite e Enter (vídeos, playlists e canais) |
+| Ocultar repetidos/compilados | **Pesquisar** → caixas "Esconder repetidos", "Sem compilados (>1 h)" |
+| Ver detalhes e miniatura | clique num resultado (ficha aparece embaixo) |
+| Abrir e escolher itens de uma playlist | marque a playlist → **Abrir playlist** → **Marcar só os disponíveis** |
+| Guardar a playlist do YouTube na biblioteca | **Salvar na biblioteca** (entra só o que já foi baixado) |
+| Juntar músicas de várias buscas | **Adicionar à cesta** (a cesta acumula e sobrevive a fechar) |
+| Procurar dentro da cesta | **Fila de downloads** → "Procurar na cesta" |
+| Trocar MP3/MP4 de vários itens | mesma tela → "Formato dos marcados" → **Aplicar** |
+| Escolher a capa | Biblioteca → **Buscar capa** → escolha na prévia → **Usar esta capa** |
+| Pular no meio da música | clique na barra do player; Espaço pausa; Ctrl+←/→ ±10 s |
+| Ver erros sem terminal | botão **Mensagens** (também em `dados\app.log`) |
+| Ajustar bitrate com nome claro | **Configurações** → "Bitrate do MP3" |
+
+Nada disso exige editar arquivo nenhum.
+
+## 6. Se algo der errado
 
 | Mensagem | O que fazer |
 |---|---|
@@ -69,12 +93,18 @@ Nenhum deles deve ir para o GitHub.
 
 ## O que ainda não está pronto (para você saber o que esperar)
 
-- **Identificação musical e capa reais** nunca rodaram em ambiente com internet
-  liberada: aqui o sandbox bloqueia YouTube/iTunes/MusicBrainz/Deezer. Os testes
-  usam respostas reais gravadas, e o comportamento de falha está correto — mas o
-  primeiro download de verdade vai ser o primeiro teste real disso. Se a capa
-  não aparecer, o programa continua certo: mantém o áudio e as tags do vídeo.
-- **Gerenciador de várias APIs** (várias chaves, editar, remover, testar) ainda
-  é a Etapa C do [`COMANDOS.md`](COMANDOS.md).
-- Se algo falhar no Windows, o log mais útil é a saída de
+- **Identificação musical, capa e IA reais** nunca rodaram com internet
+  liberada: o ambiente de desenvolvimento bloqueia YouTube/iTunes/MusicBrainz/
+  Deezer. Os testes usam respostas no formato real das APIs, e o comportamento
+  de falha está correto — mas o primeiro download de verdade será o primeiro
+  teste real disso. Se a capa/álbum não vier, o programa continua certo: mantém
+  o áudio e as tags do vídeo.
+- **O áudio não foi ouvido aqui**: o `ffplay` não existe no ambiente de
+  desenvolvimento. O player é testado na montagem do comando, no seek e no
+  estado salvo; a confirmação de som fica para o seu PC.
+- **A janela real do Windows não foi aberta**: a interface é testada com Tk
+  simulado (cada widget registrado, cada botão clicado). Aparência/fonte podem
+  precisar de ajuste fino no seu monitor.
+- Se algo falhar no Windows, o mais útil é abrir **Mensagens** na própria
+  janela (fica em `dados\app.log`) e, se precisar, a saída de
   `python musica.py download "<URL>" --formato mp3` num terminal.

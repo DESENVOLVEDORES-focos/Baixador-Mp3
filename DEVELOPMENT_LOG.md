@@ -432,3 +432,40 @@ janela **real** não foi aberta aqui. A cobertura usa Tk simulado, que pega
 assinatura de widget, atributo inexistente, método faltando e página vazia — não
 pega geometria/aparência. A primeira execução no Windows continua sendo
 necessária para avaliar o visual.
+
+---
+
+## Rodada 2026-11-17 (continuação) — revisão completa da especificação
+
+Ordem de trabalho seguida (implementar → testar → corrigir → commitar):
+
+1. **Reprodutor na tela** (`66e2f03`): barra clicável com seek via `-ss`, tempo
+   formatado, atalhos (Espaço/Ctrl+setas/Ctrl+N-P-L-R) e estado em
+   `dados/player.json` restaurado ao abrir e gravado ao fechar.
+2. **Botão morto** (`258e532`): `tests/test_botoes_vivos.py` abre as 10 páginas,
+   coleta os 96 widgets com `command` e **executa** cada um sem dados e sem
+   rede. Nenhum estourou (o único erro foi do próprio teste, que chamava um
+   método com nome errado).
+3. **ID3 estendido + ReplayGain** (`47174ee`): TCOM/TPOS/TSRC/TXXX, medição
+   `ebur128` real e gravação de `REPLAYGAIN_*`; preferência nova na tela.
+4. **JSON da IA** (`b6332b6`): esquema enviado, validação da resposta e
+   repetição automática quando o provedor recusa `response_format`.
+5. **Prévia de capa** (`88ddd97`): cartões com as capas encontradas antes de
+   qualquer gravação; cancelar não altera o arquivo.
+6. **Pesquisa** (`de8f118`): deduplicação por canal+título normalizado,
+   compilados/sem duração opcionais, refiltragem sem nova busca e contagem do
+   que foi escondido.
+7. **Playlist aberta** (`8f33d29`): resumo honesto, "marcar só os disponíveis",
+   "salvar na biblioteca", "ver o que já tenho".
+8. **Ficha do resultado** (`b013564`): detalhes + miniatura em cache.
+9. **Cesta** (`fed8ae3`): busca interna com índice correto e formato em lote.
+10. **Mensagens na tela** (`ae2877e`): painel + `dados/app.log`.
+11. **Bitrate explícito** (`6be0be2`): lista com significado de cada opção.
+12. **Integração real** (`eeaca16`): `tests/test_integracao_real.py` com MP3 do
+    FFmpeg atravessando verificação → tags → biblioteca → playlist → cesta →
+    fila → player → reabertura.
+
+Estado: **578 testes, 1 pulado, 94 subtestes**, `pyflakes` limpo; pacote
+`Central_MP3_Teste.zip` extraído em pasta limpa e revalidado (mesma suíte e os
+35 módulos importando). O que não dá para testar aqui (som, janela real, rede
+das APIs) está listado em `README.md` e `COMECE_AQUI.md`.

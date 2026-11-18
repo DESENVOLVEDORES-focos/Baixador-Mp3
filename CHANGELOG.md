@@ -1,5 +1,73 @@
 # Changelog
 
+## 2026-11-17 (continuação) — tudo o que faltava, e o pacote de teste
+
+Rodada de revisão da especificação inteira. Cada item abaixo foi implementado,
+testado e só então commitado.
+
+### Reprodutor
+- **Barra de progresso clicável** (pular para o ponto, com `-ss` no ffplay),
+  tempo "1:23 / 4:05" (ou "duração desconhecida" — sem inventar).
+- **Atalhos**: Espaço (pausa, ignorado enquanto digita em campo de texto),
+  Ctrl+←/→ ±10 s, Ctrl+↑/↓ volume, Ctrl+N/P faixa, Ctrl+L aleatório, Ctrl+R
+  repetição.
+- **Estado persistido** em `dados/player.json`: volume, repetição, aleatório,
+  fila e última faixa — restaurado ao abrir e gravado ao fechar.
+
+### Metadados e áudio
+- **ID3 estendido**: TCOM (compositor), TPOS (disco/total), TSRC (ISRC) e
+  frames **TXXX** com `fonte`, `origem_url`, `isrc` e `musicbrainz_id`.
+  MusicBrainz passa a trazer compositor e disco; iTunes, disco/total.
+- **ReplayGain medido de verdade**: `ebur128` + `volumedetect` do FFmpeg →
+  `REPLAYGAIN_TRACK_GAIN/PEAK/RANGE` e `REFERENCE_LOUDNESS` gravados como TXXX
+  (sem reencodar o áudio). Opção nova em Configurações; sem FFmpeg, a função
+  devolve o motivo em vez de fingir.
+- **Bitrate explícito** na tela: lista com o significado de cada opção
+  (melhor/VBR ~245, 320, 256, 192, 160, 128 kbps) no lugar do campo "0/192K".
+
+### IA
+- Resposta validada contra **JSON Schema** (`response_format`), com recusa de
+  lista/objeto/resposta vazia e **repetição automática** da chamada em
+  provedores que não aceitam o formato. O motivo da recusa aparece para o
+  usuário, sem nunca expor a chave.
+
+### Pesquisa, playlists e cesta
+- **Deduplicação**: "Tempo Perdido (Official Video)" e "Tempo Perdido" do mesmo
+  canal contam como um; mesmo título de outro canal continua aparecendo.
+  Opções "Sem compilados (>1 h)" e "Só com duração conhecida" — mudar a caixa
+  refiltra sem nova busca, e o resumo diz quantos e por quê.
+- **Ficha do resultado**: canal, duração (ou "o YouTube não informou"),
+  quantidade de vídeos, canal verificado, se já está na biblioteca, URL e
+  **miniatura** vinda do cache.
+- **Playlist aberta**: resumo (itens, tempo total, privados, repetidos),
+  "Marcar só os disponíveis", "Salvar na biblioteca" (só o que já foi baixado,
+  com explicação quando não há nada) e "Ver o que já tenho".
+- **Cesta**: campo de busca (índice continua correto com filtro ativo) e troca
+  de formato MP3↔MP4 em lote, nos marcados ou na cesta inteira.
+
+### Capa
+- **Prévia antes de gravar**: a busca mostra um cartão por capa encontrada
+  (fonte, dimensões, se é oficial) e só grava a escolhida; "Cancelar" não
+  altera o arquivo. Sem capa válida, avisa que nada foi gravado.
+
+### Interface
+- **Painel de mensagens** na tela (com "Copiar tudo") e log em `dados/app.log`
+  — o terminal deixou de ser necessário para ver erro.
+- Botão "Abrir pasta de dados"; **96 botões clicados automaticamente** num
+  teste que falha se algum levantar exceção.
+
+### Testes
+- `test_integracao_real.py`: fluxo real com MP3 do FFmpeg, banco SQLite,
+  playlist, cesta, fila, reprodutor e persistência ao fechar/reabrir.
+- `test_botoes_vivos.py`: executa cada botão das 10 páginas (sem dados, sem
+  rede) e falha se algum estourar.
+- Suíte final: **578 testes, 1 pulado, 94 subtestes**, `pyflakes` limpo.
+
+### Pacote
+- `Central_MP3_Teste.zip` gerado a partir do projeto, sem `.git`, `.venv`,
+  bancos, logs, `api.txt`, `cookies.txt` nem chaves; extraído numa pasta limpa
+  e **revalidado** (578 testes passando e 35 módulos importando).
+
 ## 2026-11-17 — Central Musical: uma janela para tudo (versão 6.0)
 
 Pedido do usuário: *"central completa de gerenciamento e download de músicas

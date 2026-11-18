@@ -55,7 +55,19 @@ O que vale saber:
   reindexada a qualquer momento sem duplicar.
 - **Sem invenção**: quando as fontes públicas e a IA não confirmam um campo, ele
   fica vazio e a tela diz o que não foi confirmado. Capa duvidosa não é
-  incorporada.
+  incorporada — a busca de capa **mostra as opções antes de gravar** e você
+  escolhe (ou cancela sem alterar o arquivo).
+- **Pesquisa limpa**: repetidos do mesmo canal são escondidos (com a contagem
+  do que foi escondido), compilados de 1 h ou mais aparecem marcados e podem ser
+  ocultados, e cada resultado mostra ficha e miniatura ao ser selecionado.
+- **Player completo no rodapé**: barra clicável para pular, Espaço para pausar,
+  Ctrl+←/→ para avançar/voltar 10 s, Ctrl+↑/↓ para o volume. Volume, repetição
+  e a última fila voltam quando você abre o programa de novo.
+- **Metadados de verdade**: além de título/artista/álbum/ano/gênero/faixa, o MP3
+  recebe compositor, disco/total, ISRC, a origem (`fonte`, URL do vídeo) e, se
+  você ligar, **ReplayGain medido** com o FFmpeg.
+- **Nada se perde de vista**: toda mensagem e todo erro aparecem no botão
+  **Mensagens** (e ficam em `dados\app.log`) — não é preciso abrir terminal.
 
 ## Como usar (fluxo rápido)
 
@@ -189,27 +201,45 @@ python -m pyflakes *.py tests/*.py   # deve sair vazio
 python -m pytest -q
 ```
 
-`87 testes` automatizados cobrem, entre outros: download feliz de MP3/MP4 com
-yt-dlp simulado, **caminho de erro** (HTTP 404 vira mensagem, não traceback),
-prévia (análise de ao vivo, corte do trecho e limpeza),
-política de sobrescrita, progresso por etapa, limpeza de intermediários,
-miniaturas, cookies, preferências e a integração com metadados/capa.
+**578 testes automatizados** (94 subtestes) cobrem, entre outros: download de
+MP3/MP4 com yt-dlp simulado, **caminho de erro** (HTTP 404 vira mensagem, não
+traceback), prévia (ao vivo, corte do trecho, limpeza), política de sobrescrita,
+progresso por etapa, miniaturas, cookies, preferências, a integração com
+metadados/capa, a **Central Musical** (biblioteca SQLite, cesta, playlists,
+fila, reprodutor, filtros, paginação), **ID3 estendido e ReplayGain com MP3
+gerado pelo FFmpeg**, validação do JSON da IA, deduplicação da pesquisa e o
+**fluxo real de ponta a ponta** (`tests/test_integracao_real.py`).
+
+Há ainda um teste que **clica nos 96 botões** das 10 páginas, com biblioteca e
+rede vazias, e falha se algum levantar exceção (`tests/test_botoes_vivos.py`):
+é a garantia contra botão decorativo.
+
+Como rodar os testes (opcional, para quem quiser conferir):
+
+```
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+```
 
 O CI (`.github/workflows/ci.yml`) roda `pyflakes`, `compileall` e `pytest` em
 **Windows e Linux** a cada push.
 
 ## O que **não** foi testado nesta máquina
 
-Honestidade vale mais que número de testes: este ambiente de desenvolvimento é
+Honestidade vale mais que número de testes: o ambiente de desenvolvimento é
 Linux, sem Tkinter, e a rede bloqueia YouTube e as APIs de música. Portanto:
 
-- a **janela real** não foi aberta aqui (a lógica sem tela tem 12 testes);
-- identificação musical e capa **reais** não foram executadas (os testes usam
-  clientes falsos com respostas reais das APIs);
-- download real foi validado com yt-dlp/FFmpeg reais **servindo mídia local**.
+- a **janela real** (Tkinter) não foi aberta aqui: a lógica de tela é testada
+  com um Tk simulado que registra cada widget e permite *clicar* os botões;
+- identificação musical, capa e IA **reais** não foram executadas (os testes
+  usam clientes falsos com respostas no formato real das APIs; a validação do
+  JSON da IA e o fallback de provedor são testados);
+- download real foi validado com yt-dlp/FFmpeg reais **servindo mídia local**;
+- **o `ffplay` não existe neste ambiente**, então o áudio não foi ouvido: o
+  reprodutor é testado na montagem do comando, no seek e no estado persistido.
 
-Os passos acima devem ser confirmados no seu Windows — veja
-[`AUDITORIA.md`](AUDITORIA.md) (checklist da Etapa D).
+Nada disso depende de editar arquivos: abra `iniciar.bat` e use as páginas.
+Os passos a confirmar no seu Windows estão em [`AUDITORIA.md`](AUDITORIA.md).
 
 ## Documentação do projeto
 
