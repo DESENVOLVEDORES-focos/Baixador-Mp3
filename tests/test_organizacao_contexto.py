@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -137,7 +138,7 @@ class TestPublicacaoComNomeOrganizado(unittest.TestCase):
     def test_sem_contexto_usa_o_nome_do_arquivo(self):
         resultado, config = self._baixar(None)
         self.assertEqual(resultado.caminho.name, "Queen - Bohemian Rhapsody.mp3")
-        self.assertEqual(resultado.caminho.parent, config.musicas)
+        self.assertTrue(os.path.samefile(resultado.caminho.parent, config.musicas))
 
     def test_contexto_da_pesquisa_da_nome_artista_titulo(self):
         contexto = ContextoMidia(titulo="Bohemian Rhapsody (Official Video)",
@@ -218,8 +219,9 @@ class TestOrganizacaoPorAlbum(unittest.TestCase):
         arquivo = config.musicas / "Queen - Bohemian Rhapsody.mp3"
         arquivo.write_bytes(b"x")
         destino = app._organizar_em_subpasta(arquivo, "mp3")
-        self.assertEqual(destino.parent,
-                         config.musicas / "Queen" / "A Night at the Opera")
+        # No Windows o temp pode vir como RUNNER~1 (8.3): comparar por arquivo.
+        self.assertTrue(os.path.samefile(
+            destino.parent, config.musicas / "Queen" / "A Night at the Opera"))
         self.assertTrue(destino.is_file())
         self.assertFalse(arquivo.exists())
 
