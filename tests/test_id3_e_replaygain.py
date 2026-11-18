@@ -204,3 +204,75 @@ class TestIntegracaoComPreferencias(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBitrateExplicito(unittest.TestCase):
+    """A tela mostra bitrate com nome claro e o núcleo recebe o código certo."""
+
+    def test_descricao_de_cada_opcao(self):
+        from preferencias import OPCOES_BITRATE, descrever_bitrate
+
+        self.assertEqual(len(OPCOES_BITRATE), len({c for c, _d in OPCOES_BITRATE}))
+        self.assertIn("320", descrever_bitrate("320K"))
+        self.assertIn("Melhor", descrever_bitrate("0"))
+        self.assertIn("personalizado", descrever_bitrate("999K"))
+
+    def test_codigo_do_bitrate_na_tela(self):
+        from tests.test_central_app import TestCentralApp
+
+        TestCentralApp.setUpClass()
+        try:
+            app = TestCentralApp.app
+            app.mostrar("config")
+            from preferencias import descrever_bitrate
+
+            app.config_qualidade.set(descrever_bitrate("192K"))
+            self.assertEqual(app._codigo_do_bitrate(), "192K")
+            app.config_qualidade.set(descrever_bitrate("0"))
+            self.assertEqual(app._codigo_do_bitrate(), "0")
+            app.config_qualidade.set("256K")     # valor digitado por fora
+            self.assertEqual(app._codigo_do_bitrate(), "256K")
+        finally:
+            TestCentralApp.tearDownClass()
+
+    def test_valor_que_chega_ao_yt_dlp(self):
+        from downloader import Downloader
+
+        class Falso:
+            qualidade_mp3 = "192K"
+            organizar_nomes = False
+            organizar_por_album = False
+            sobrescrita = "pular"
+            caminho_cookies = None
+
+            @property
+            def musicas(self):
+                from pathlib import Path
+                return Path("/tmp")
+
+            @property
+            def videos(self):
+                from pathlib import Path
+                return Path("/tmp")
+
+            def comando_yt_dlp(self):
+                return ["yt-dlp"]
+
+            def caminho_ffmpeg(self):
+                return "/tmp/ff10/ffmpeg"
+
+            def argumentos_cookies(self):
+                return []
+
+        argumentos = Downloader(Falso()).construir_argumentos(
+            "https://youtu.be/x", "mp3", politica="pular")
+        posicao = argumentos.index("--audio-quality")
+        self.assertEqual(argumentos[posicao + 1], "192K")
+
+    def test_preferencia_invalida_e_recusada(self):
+        from dataclasses import replace
+
+        from preferencias import Preferencias
+
+        with self.assertRaises(ValueError):
+            replace(Preferencias(), qualidade_mp3="muito").validar()

@@ -2516,11 +2516,22 @@ class CentralApp:
         ttk.Button(downloads, text="Escolher...",
                    command=lambda: self._escolher_pasta(self.config_mp3)).grid(
             row=0, column=2, padx=4)
-        ttk.Label(downloads, text="Qualidade MP3 (0=máx ou 192K):").grid(
+        ttk.Label(downloads, text="Bitrate do MP3:").grid(
             row=1, column=0, sticky="e", padx=6)
-        self.config_qualidade = tk.StringVar(value=str(prefs.qualidade_mp3))
-        ttk.Entry(downloads, textvariable=self.config_qualidade, width=14).grid(
+        from preferencias import OPCOES_BITRATE, descrever_bitrate
+
+        self._bitrates = dict(OPCOES_BITRATE)
+        self.config_qualidade = tk.StringVar(
+            value=descrever_bitrate(str(prefs.qualidade_mp3)))
+        ttk.Combobox(downloads, textvariable=self.config_qualidade, width=42,
+                     state="readonly",
+                     values=[texto for texto in self._bitrates.values()]).grid(
             row=1, column=1, sticky="w", pady=3)
+        self.bitrate_dica = tk.StringVar(
+            value="O arquivo final é sempre MP3; a qualidade da fonte é o "
+                  "melhor áudio disponível no YouTube.")
+        ttk.Label(downloads, textvariable=self.bitrate_dica,
+                  style="Fraco.TLabel").grid(row=1, column=2, sticky="w", padx=6)
         ttk.Label(downloads, text="Downloads ao mesmo tempo (1–4):").grid(
             row=2, column=0, sticky="e", padx=6)
         self.config_simultaneos = tk.IntVar(value=int(prefs.downloads_simultaneos))
@@ -2668,7 +2679,7 @@ class CentralApp:
             self.central.aplicar_preferencias(replace(self.central.preferencias,
                 tema=self.config_tema.get(), tamanho_fonte=self.config_fonte.get(),
                 diretorio_mp3=self.config_mp3.get().strip(),
-                qualidade_mp3=self.config_qualidade.get().strip(),
+                qualidade_mp3=self._codigo_do_bitrate(),
                 downloads_simultaneos=int(self.config_simultaneos.get()),
                 sobrescrita=self.config_sobrescrita.get(),
                 organizar_nomes=bool(self.config_organizar.get()),
@@ -2687,6 +2698,14 @@ class CentralApp:
         self.cores = tema.aplicar(
             self.raiz, nome=self.config_tema.get(), tamanho=self.config_fonte.get())
         self.notificar("Configurações", "Salvo. As mudanças já valem nesta sessão.")
+
+    def _codigo_do_bitrate(self) -> str:
+        """Texto escolhido na lista → valor que o yt-dlp entende."""
+        escolhido = str(self.config_qualidade.get()).strip()
+        for codigo, descricao in self._bitrates.items():
+            if escolhido == descricao:
+                return codigo
+        return escolhido or "0"   # valor personalizado digitado à mão
 
     def _importar_chave(self) -> None:
         caminho = filedialog.askopenfilename(

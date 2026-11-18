@@ -192,6 +192,27 @@ class Preferencias:
             raise ValueError("Qualidade MP3 inválida (use 0–10 ou ex.: 192K).")
 
 
+# Bitrates oferecidos na tela, com o que cada um significa de verdade.
+# "0" é o padrão do yt-dlp (VBR ~245 kbps no LAME V0) e não é um número fixo.
+OPCOES_BITRATE: tuple[tuple[str, str], ...] = (
+    ("0", "Melhor possível (VBR ~245 kbps) — recomendado"),
+    ("320K", "320 kbps (CBR, arquivo maior)"),
+    ("256K", "256 kbps"),
+    ("192K", "192 kbps (equilíbrio tamanho/qualidade)"),
+    ("160K", "160 kbps"),
+    ("128K", "128 kbps (menor arquivo, qualidade audível pior)"),
+)
+
+
+def descrever_bitrate(valor: str) -> str:
+    """Texto legível para o valor de ``--audio-quality`` (nunca inventa)."""
+    escolhido = str(valor or "0").strip().upper()
+    for codigo, descricao in OPCOES_BITRATE:
+        if codigo == escolhido or codigo == str(valor).strip():
+            return descricao
+    return f"Valor personalizado ({valor})"
+
+
 def caminho_arquivo(config: Configuracoes = CONFIG) -> Path:
     return config.dados / ARQUIVO_PREFERENCIAS
 
@@ -296,6 +317,7 @@ def derivar_configuracoes(prefs: Preferencias,
 
 __all__ = [
     "IA_MODELO_PADRAO", "IA_URL_PADRAO", "Preferencias", "aplicar_ao_ambiente",
-    "caminho_arquivo", "carregar", "derivar_configuracoes", "mascarar_segredo",
+    "OPCOES_BITRATE", "caminho_arquivo", "carregar", "derivar_configuracoes",
+    "descrever_bitrate", "mascarar_segredo",
     "proteger_segredo", "revelar_segredo", "salvar",
 ]
