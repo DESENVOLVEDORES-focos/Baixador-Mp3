@@ -38,12 +38,19 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python -m pytest -q -rf --tb=short 2>&1 | tee saida-testes.txt
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            echo "::error::Testes falharam; resumo nas linhas acima e no artifact."
+          python -m pytest -q -rf --tb=line > saida-testes.txt 2>&1 || true
+          cat saida-testes.txt
+          # Publica o motivo da falha como anotação do check (legível pela API
+          # mesmo quando o log bruto não está acessível).
+          if grep -qE "failed|error" saida-testes.txt; then
+            grep -E "^(FAILED|ERROR)" saida-testes.txt | head -10 | while IFS= read -r l; do
+              echo "::error title=Falha de teste::$l"
+            done
+            grep -E "^(E |[A-Za-z]:.*Error|/.*Error)" saida-testes.txt | head -10 | while IFS= read -r l; do
+              echo "::error title=Detalhe::$l"
+            done
           fi
-          exit "$status"
+          python -m pytest -q > /dev/null 2>&1
 
       - name: Publicar resultado dos testes
         if: always()
