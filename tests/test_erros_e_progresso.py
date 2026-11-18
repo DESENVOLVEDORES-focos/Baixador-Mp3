@@ -208,8 +208,12 @@ class TestProgresso(Base):
         percentuais = [e.percentual for e in eventos if e.percentual is not None]
         self.assertEqual(percentuais, [10.2, 55.7, 100.0])
         # Publicado na pasta final com o nome limpo, sem intermediários.
+        # (No Windows o caminho pode vir em 8.3 — "RUNNER~1" — por isso a
+        # comparação é por os.path.samefile, não por Path.)
         self.assertTrue(os.path.samefile(resultado.caminho.parent, self.config.musicas))
-        self.assertEqual(list(self.config.musicas.iterdir()), [resultado.caminho])
+        arquivos = list(self.config.musicas.iterdir())
+        self.assertEqual(len(arquivos), 1)
+        self.assertTrue(os.path.samefile(arquivos[0], resultado.caminho))
         etapas = {e.etapa for e in eventos}
         self.assertIn(ETAPA_CONVERTENDO, etapas)
         self.assertIn(ETAPA_METADADOS, etapas)
