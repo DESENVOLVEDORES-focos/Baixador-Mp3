@@ -342,6 +342,8 @@ importando. `pyflakes` limpo.
 - [ ] **ouvir** uma música pelo player (▶) e pular pela barra
 - [ ] fechar e reabrir: biblioteca, cesta, playlists, volume e última fila
 - [ ] botão **Mensagens** mostrando o que aconteceu e `dados\app.log` existindo
+- [ ] interface clássica (`iniciar_interface.bat`) abre, pesquisa e baixa
+- [ ] atalhos do player (Espaço, Ctrl+←/→, Ctrl+↑/↓) e "Tocar última" ao reabrir
 
 Se algum item falhar, o log útil é o do botão **Mensagens** (ou
 `dados\app.log`), que já vem com a mensagem em português.

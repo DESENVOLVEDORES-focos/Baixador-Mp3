@@ -31,3 +31,5 @@ cookies-export.txt
 Baixador-Mp3.lnk
 ferramentas/*.zip
 
+# Pacote de entrega: gerado localmente, NUNCA versionado
+Central_MP3_Teste.zip
