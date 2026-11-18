@@ -61,10 +61,11 @@ class TestNomes(unittest.TestCase):
             ("So Um Titulo", ""))
 
     def test_subpasta_usa_apenas_dados_confirmados(self):
+        # Comparar partes: no Windows o separador é "\\".
         self.assertEqual(
-            str(subpasta({"artista": "Queen", "album": "A Night at the Opera"})),
-            "Queen/A Night at the Opera")
-        self.assertEqual(str(subpasta({"artista": "Queen"})), "Queen")
+            subpasta({"artista": "Queen", "album": "A Night at the Opera"}).parts,
+            ("Queen", "A Night at the Opera"))
+        self.assertEqual(subpasta({"artista": "Queen"}).parts, ("Queen",))
         self.assertIsNone(subpasta({"artista": "", "album": ""}))
 
     def test_caminho_disponivel_acrescenta_contador(self):
