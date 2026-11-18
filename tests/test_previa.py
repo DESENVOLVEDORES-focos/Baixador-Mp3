@@ -13,11 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from configuracoes import Configuracoes
-from previa import (
-    SEGUNDOS_MAXIMO, SEGUNDOS_PADRAO, AnaliseFaixa, DadosVideo, ErroPrevia,
-    Previa, analisar, limpar, pasta_para_tocar,
-)
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.midia.previa import SEGUNDOS_MAXIMO, SEGUNDOS_PADRAO, AnaliseFaixa, DadosVideo, ErroPrevia, Previa, analisar, limpar, pasta_para_tocar
 
 
 class TestAnaliseDeFaixa(unittest.TestCase):
@@ -142,7 +139,7 @@ class TestExecucaoDaPrevia(unittest.TestCase):
             "duration": 312, "is_live": False,
             "formats": [{"acodec": "mp4a", "vcodec": "none"}],
         })
-        with patch("previa.subprocess.run", return_value=self._processo(saida)):
+        with patch("baixador.midia.previa.subprocess.run", return_value=self._processo(saida)):
             dados = self.previa.preparar("https://youtu.be/abc")
         self.assertIsInstance(dados, DadosVideo)
         self.assertEqual(dados.titulo, "Tempo Perdido (Ao Vivo)")
@@ -154,13 +151,13 @@ class TestExecucaoDaPrevia(unittest.TestCase):
 
         saida = json.dumps({"title": "Stream", "live_status": "is_live",
                             "formats": [{"acodec": "none"}]})
-        with patch("previa.subprocess.run", return_value=self._processo(saida)):
+        with patch("baixador.midia.previa.subprocess.run", return_value=self._processo(saida)):
             dados = self.previa.preparar("https://youtu.be/abc")
         self.assertTrue(dados.ao_vivo)
         self.assertFalse(dados.tem_audio)
 
     def test_preparar_falha_com_mensagem_do_ytdlp(self):
-        with patch("previa.subprocess.run",
+        with patch("baixador.midia.previa.subprocess.run",
                    return_value=self._processo(stderr="ERROR: Video unavailable",
                                                codigo=1)):
             with self.assertRaises(ErroPrevia) as contexto:
@@ -168,7 +165,7 @@ class TestExecucaoDaPrevia(unittest.TestCase):
         self.assertIn("Video unavailable", str(contexto.exception))
 
     def test_preparar_sem_saida_avisa(self):
-        with patch("previa.subprocess.run", return_value=self._processo("")):
+        with patch("baixador.midia.previa.subprocess.run", return_value=self._processo("")):
             with self.assertRaises(ErroPrevia):
                 self.previa.preparar("https://youtu.be/abc")
 
@@ -181,7 +178,7 @@ class TestExecucaoDaPrevia(unittest.TestCase):
             (destino / "previa.part").write_bytes(b"\x00" * 10)
             return self._processo()
 
-        with patch("previa.subprocess.run", side_effect=criar):
+        with patch("baixador.midia.previa.subprocess.run", side_effect=criar):
             arquivo = self.previa.baixar_amostra("https://youtu.be/abc", destino)
         self.assertEqual(arquivo.name, "previa.m4a")
         self.assertLessEqual(arquivo.stat().st_size, 4 * 1024 * 1024)
@@ -194,7 +191,7 @@ class TestExecucaoDaPrevia(unittest.TestCase):
             (destino / "previa.m4a").write_bytes(b"\x00" * 331)  # corte inválido
             return self._processo()
 
-        with patch("previa.subprocess.run", side_effect=criar):
+        with patch("baixador.midia.previa.subprocess.run", side_effect=criar):
             with self.assertRaises(ErroPrevia) as contexto:
                 self.previa.baixar_amostra("https://youtu.be/abc", destino)
         self.assertIn("vazia", str(contexto.exception))
@@ -209,7 +206,7 @@ class TestExecucaoDaPrevia(unittest.TestCase):
                 arquivo.write(b"\x00" * (4 * 1024 * 1024 + 10))
             return self._processo()
 
-        with patch("previa.subprocess.run", side_effect=criar):
+        with patch("baixador.midia.previa.subprocess.run", side_effect=criar):
             with self.assertRaises(ErroPrevia) as contexto:
                 self.previa.baixar_amostra("https://youtu.be/abc", destino)
         self.assertIn("limite", str(contexto.exception))
@@ -226,7 +223,7 @@ class TestExecucaoDaPrevia(unittest.TestCase):
     def test_pasta_para_tocar_devolve_original_sem_ffmpeg(self):
         arquivo = self.raiz / "previa.webm"
         arquivo.write_bytes(b"x")
-        with patch("previa.shutil.which", return_value=None):
+        with patch("baixador.midia.previa.shutil.which", return_value=None):
             self.assertEqual(pasta_para_tocar(arquivo, self.raiz), arquivo)
 
 

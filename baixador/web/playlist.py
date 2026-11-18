@@ -18,7 +18,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from configuracoes import CONFIG, Configuracoes, argumentos_cookies
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes, argumentos_cookies
 
 log = logging.getLogger("baixador.playlist")
 

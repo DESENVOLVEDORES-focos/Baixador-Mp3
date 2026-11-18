@@ -55,16 +55,17 @@ class TestLinhaDeComando(unittest.TestCase):
     def test_falha_ao_abrir_mostra_o_motivo(self):
         falso = type(sys)("tkinter")
         with patch.dict(sys.modules, {"tkinter": falso}), \
-                patch("central_app.iniciar", side_effect=RuntimeError("banco travado")), \
+                patch("baixador.app.central_app.iniciar", side_effect=RuntimeError("banco travado")), \
                 patch("main._avisar") as avisar:
             self.assertEqual(entrada.main([]), 1)
             self.assertIn("banco travado", avisar.call_args[0][1])
 
     def test_classica_delega_para_interface(self):
         falso = type(sys)("tkinter")
-        interface = type(sys)("interface")
+        interface = type(sys)("baixador.app.interface")
         interface.main = lambda: 0
-        with patch.dict(sys.modules, {"tkinter": falso, "interface": interface}):
+        with patch.dict(sys.modules, {"tkinter": falso,
+                                      "baixador.app.interface": interface}):
             self.assertEqual(entrada.main(["--classica"]), 0)
 
     def test_versao_bate_com_o_modulo(self):

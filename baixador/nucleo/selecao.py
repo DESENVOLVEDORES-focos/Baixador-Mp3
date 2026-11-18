@@ -20,8 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from biblioteca import chave_busca
-from configuracoes import CONFIG, Configuracoes
+from baixador.nucleo.biblioteca import chave_busca
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
 
 log = logging.getLogger("baixador.selecao")
 
@@ -249,7 +249,7 @@ class Selecao:
 
     def estimativa(self) -> tuple[int, int]:
         """``(segundos, bytes aproximados)`` do que está na cesta."""
-        from limites import estimar
+        from baixador.nucleo.limites import estimar
 
         return estimar(item.duracao for item in self._itens)
 

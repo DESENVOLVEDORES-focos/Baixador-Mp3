@@ -10,11 +10,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from configuracoes import Configuracoes
-from playlist import (
-    LIMITE_MAXIMO, PASSO_PADRAO, Playlist, construir_comando, listar,
-    listar_mais, montar_playlist,
-)
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.web.playlist import LIMITE_MAXIMO, PASSO_PADRAO, Playlist, construir_comando, listar, listar_mais, montar_playlist
 
 
 def _pagina(titulo: str, inicio: int, quantidade: int,
@@ -96,7 +93,7 @@ class TestListarMais(unittest.TestCase):
     def test_200_mais_200_chega_a_400_sem_duplicar(self):
         primeira = self._dublê(1200)(self._URL, 200, self.config)
         self.assertEqual(len(primeira.itens), 200)
-        with patch("playlist.listar", side_effect=self._dublê(1200)):
+        with patch("baixador.web.playlist.listar", side_effect=self._dublê(1200)):
             segunda = listar_mais(primeira, 200, self.config)
         self.assertEqual(len(segunda.itens), 400)
         ids = [item.id for item in segunda.itens]
@@ -108,7 +105,7 @@ class TestListarMais(unittest.TestCase):
 
     def test_numeracao_final_fica_sequencial(self):
         primeira = self._dublê(600)(self._URL, 200, self.config)
-        with patch("playlist.listar", side_effect=self._dublê(600)):
+        with patch("baixador.web.playlist.listar", side_effect=self._dublê(600)):
             segunda = listar_mais(primeira, 200, self.config)
         self.assertEqual([i.indice for i in segunda.itens[:3]], [1, 2, 3])
         self.assertEqual(segunda.itens[-1].indice, 400)
@@ -116,7 +113,7 @@ class TestListarMais(unittest.TestCase):
     def test_quando_acaba_nao_chama_o_yt_dlp_de_novo(self):
         completa = self._dublê(150)(self._URL, 200, self.config)
         self.assertFalse(completa.truncada)
-        with patch("playlist.listar") as chamada:
+        with patch("baixador.web.playlist.listar") as chamada:
             resultado = listar_mais(completa, 200, self.config)
         chamada.assert_not_called()
         self.assertEqual(resultado.quantidade, 150)
@@ -129,12 +126,12 @@ class TestListarMais(unittest.TestCase):
             return montar_playlist(_pagina("Mix", 1, 200, 1200), url,
                                    limite, inicio=inicio)
 
-        with patch("playlist.listar", side_effect=teimoso):
+        with patch("baixador.web.playlist.listar", side_effect=teimoso):
             resultado = listar_mais(primeira, 200, self.config)
         self.assertEqual(resultado.quantidade, 200)  # nada duplicado
 
     def test_playlist_sem_url_recusa(self):
-        from playlist import ErroPlaylist
+        from baixador.web.playlist import ErroPlaylist
 
         vazia = Playlist(titulo="x", url="", itens=())
         with self.assertRaises(ErroPlaylist):
@@ -146,7 +143,7 @@ class TestListarMais(unittest.TestCase):
 
     def test_500_mais_500_atravessa_o_antigo_teto(self):
         primeira = self._dublê(2000)(self._URL, 500, self.config)
-        with patch("playlist.listar", side_effect=self._dublê(2000)):
+        with patch("baixador.web.playlist.listar", side_effect=self._dublê(2000)):
             segunda = listar_mais(primeira, 500, self.config)
         self.assertEqual(segunda.quantidade, 1000)
         self.assertEqual(segunda.itens[-1].id, "id1000")
@@ -167,7 +164,7 @@ class TestListarComJanela(unittest.TestCase):
             visto["comando"] = comando
             return Processo()
 
-        with patch("playlist.subprocess.run", side_effect=falso):
+        with patch("baixador.web.playlist.subprocess.run", side_effect=falso):
             try:
                 listar("https://y/p", 300, Configuracoes(raiz=Path("/tmp")),
                        inicio=101)

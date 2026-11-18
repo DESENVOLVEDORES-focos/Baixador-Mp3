@@ -9,10 +9,10 @@ import time
 import unittest
 from pathlib import Path
 
-import reprodutor as modulo_reprodutor
-from configuracoes import Configuracoes
-from reprodutor import MODOS_REPETICAO, Faixa, Reprodutor
-from selecao import ItemSelecao, Selecao
+from baixador.midia import reprodutor as modulo_reprodutor
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.midia.reprodutor import MODOS_REPETICAO, Faixa, Reprodutor
+from baixador.nucleo.selecao import ItemSelecao, Selecao
 
 
 class TestSelecao(unittest.TestCase):

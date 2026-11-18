@@ -14,7 +14,7 @@ from urllib.parse import quote_plus
 from dataclasses import dataclass
 from typing import Any
 
-from configuracoes import CONFIG, Configuracoes, argumentos_cookies
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes, argumentos_cookies
 
 
 @dataclass(frozen=True)

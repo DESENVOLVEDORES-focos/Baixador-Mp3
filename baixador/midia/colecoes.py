@@ -21,12 +21,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from biblioteca import Biblioteca, Musica
-from capas import ErroCapa, GerenciadorCapas, validar_imagem
-from metadados import (
-    ConfigMetadados, InfoMusica, aplicar_metadados, criar_processador_padrao,
-    ler_metadados,
-)
+from baixador.nucleo.biblioteca import Biblioteca, Musica
+from baixador.midia.capas import ErroCapa, GerenciadorCapas, validar_imagem
+from baixador.midia.metadados import ConfigMetadados, InfoMusica, aplicar_metadados, criar_processador_padrao, ler_metadados
 
 log = logging.getLogger("baixador.colecoes")
 

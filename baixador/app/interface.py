@@ -25,16 +25,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
-from configuracoes import CONFIG, Configuracoes
-from cookies_youtube import ErroCookies
-from cookies_youtube import importar as importar_cookies_arquivo
-from cookies_youtube import remover as remover_cookies_arquivo
-from cookies_youtube import status as status_cookies_arquivo
-from musica import Aplicacao
-from preferencias import (
-    IA_MODELO_PADRAO, IA_URL_PADRAO, Preferencias, aplicar_ao_ambiente,
-    carregar, derivar_configuracoes, salvar,
-)
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
+from baixador.web.cookies_youtube import ErroCookies
+from baixador.web.cookies_youtube import importar as importar_cookies_arquivo
+from baixador.web.cookies_youtube import remover as remover_cookies_arquivo
+from baixador.web.cookies_youtube import status as status_cookies_arquivo
+from baixador.app.musica import Aplicacao
+from baixador.nucleo.preferencias import IA_MODELO_PADRAO, IA_URL_PADRAO, Preferencias, aplicar_ao_ambiente, carregar, derivar_configuracoes, salvar
 
 log = logging.getLogger("baixador.interface")
 
@@ -92,7 +89,7 @@ class ControladorInterface:
     # -- chave de IA por arquivo (api.txt) ----------------------------------
     def importar_chave(self, origem: Any):
         """Valida o arquivo escolhido, guarda a cópia e ativa a chave."""
-        import api_ia
+        from baixador.web import api_ia
 
         info = api_ia.importar(origem, self.config)
         # Passa a valer já nesta sessão, sem reabrir o programa.
@@ -101,12 +98,12 @@ class ControladorInterface:
         return info
 
     def status_chave(self):
-        import api_ia
+        from baixador.web import api_ia
 
         return api_ia.status(self.config)
 
     def remover_chave(self) -> bool:
-        import api_ia
+        from baixador.web import api_ia
 
         removeu = api_ia.remover(self.config)
         if not self.preferencias.ia_api_key:
@@ -115,8 +112,8 @@ class ControladorInterface:
 
     def testar_chave(self) -> tuple[bool, str]:
         """Chamada mínima à API para confirmar que a chave funciona."""
-        import api_ia
-        from identificacao_ia import IdentificadorIA
+        from baixador.web import api_ia
+        from baixador.web.identificacao_ia import IdentificadorIA
 
         chave = api_ia.ler_chave(self.config)
         if not chave:
@@ -126,18 +123,18 @@ class ControladorInterface:
 
     def identificar_com_ia(self, consulta: str, canal: str = ""):
         """Usa o prompt de identificação/catalogação (6 campos)."""
-        from identificacao_ia import IdentificadorIA
+        from baixador.web.identificacao_ia import IdentificadorIA
 
         return IdentificadorIA(config=self.config).identificar(consulta, canal)
 
     # -- manutenção ---------------------------------------------------------
     def versao_ytdlp(self) -> str:
-        from atualizacao import versao_instalada
+        from baixador.midia.atualizacao import versao_instalada
 
         return versao_instalada(self.aplicacao.config)
 
     def atualizar_ytdlp(self):
-        from atualizacao import atualizar
+        from baixador.midia.atualizacao import atualizar
 
         return atualizar(self.aplicacao.config)
 
@@ -164,7 +161,7 @@ class ControladorInterface:
     def descartar_previa(self, pasta: Any) -> None:
         """Apaga o trecho baixado (nunca deixa lixo em `.baixador`)."""
         if pasta:
-            from previa import limpar
+            from baixador.midia.previa import limpar
 
             limpar(Path(pasta))
 
@@ -248,7 +245,7 @@ class ControladorInterface:
                     "IA externa é opcional e não está configurada; a "
                     "identificação usa as APIs musicais públicas e a "
                     "heurística local de títulos.")
-        from inteligencia import AssistenteIAOpenAI, ClienteHTTPUrllib
+        from baixador.web.inteligencia import AssistenteIAOpenAI, ClienteHTTPUrllib
 
         assistente = AssistenteIAOpenAI(
             ClienteHTTPUrllib(timeout=10), chave,
@@ -262,10 +259,7 @@ class ControladorInterface:
 
     def testar_provedor_musical(self, nome: str) -> tuple[str, str]:
         """Testa MusicBrainz/iTunes/Deezer (públicos, sem chave)."""
-        from inteligencia import (
-            ClienteHTTPUrllib, ConsultaMusica, ErroAPI, ProvedorDeezer,
-            ProvedorITunes, ProvedorMusicBrainz,
-        )
+        from baixador.web.inteligencia import ClienteHTTPUrllib, ConsultaMusica, ErroAPI, ProvedorDeezer, ProvedorITunes, ProvedorMusicBrainz
 
         provedores = {
             "musicbrainz": ProvedorMusicBrainz(), "itunes": ProvedorITunes(),
@@ -305,7 +299,7 @@ def _data_legivel(valor: Any) -> str:
 
 def _parece_falta_de_login(mensagem: str) -> bool:
     """Compatibilidade: delega ao classificador único de erros (diagnostico.py)."""
-    from diagnostico import classificar
+    from baixador.nucleo.diagnostico import classificar
 
     return classificar(mensagem).exige_cookies
 
@@ -465,7 +459,7 @@ class AplicativoGrafico:
         O usuário não deve receber um rastreamento do yt-dlp na cara; a
         mensagem crua fica no histórico (sanitizada) para diagnóstico.
         """
-        from diagnostico import classificar, dica_para_interface, sanitizar
+        from baixador.nucleo.diagnostico import classificar, dica_para_interface, sanitizar
 
         diagnostico = classificar(str(erro))
         texto = dica_para_interface(
@@ -611,7 +605,7 @@ class AplicativoGrafico:
         def carregar() -> None:
             dados_dir = self.controlador.pasta_dados()
             try:
-                from thumbs import obter
+                from baixador.web.thumbs import obter
 
                 caminho = obter(url, dados_dir)
             except Exception:
@@ -782,7 +776,7 @@ class AplicativoGrafico:
                 diagnostico = getattr(self.controlador.aplicacao,
                                       "ultimo_diagnostico", None)
                 if diagnostico is not None:
-                    from diagnostico import dica_para_interface
+                    from baixador.nucleo.diagnostico import dica_para_interface
 
                     tem_cookies = bool(self.controlador.status_cookies().configurado)
                     dica = dica_para_interface(diagnostico, tem_cookies)
@@ -1266,7 +1260,7 @@ class AplicativoGrafico:
 
     def _marcar_sem_ao_vivo(self) -> None:
         """Seleciona só os itens sem indício de ao vivo/show (a razão nº 1)."""
-        from previa import analisar
+        from baixador.midia.previa import analisar
 
         escolhidos = []
         eliminados = 0
@@ -1493,7 +1487,7 @@ class AplicativoGrafico:
         self.ia_resultado_var.set("Consultando a IA de identificação...")
 
         def concluir(identificacao: Any) -> None:
-            from identificacao_ia import IdentificadorIA
+            from baixador.web.identificacao_ia import IdentificadorIA
 
             if identificacao is None:
                 erro = ""
@@ -1556,7 +1550,7 @@ class AplicativoGrafico:
             f"{onde}. Clique em \"Testar chave\" para confirmar que funciona.")
 
     def _ao_importar_chave(self) -> None:
-        from api_ia import ErroChave
+        from baixador.web.api_ia import ErroChave
 
         caminho = filedialog.askopenfilename(
             title="Selecione o arquivo com a chave de API",

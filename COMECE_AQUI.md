@@ -69,7 +69,7 @@ nunca é enviado a outros serviços e nunca deve ser compartilhado ou commitado.
 | Trocar MP3/MP4 de vários itens | mesma tela → "Formato dos marcados" → **Aplicar** |
 | Escolher a capa | Biblioteca → **Buscar capa** → escolha na prévia → **Usar esta capa** |
 | Pular no meio da música | clique na barra do player; Espaço pausa; Ctrl+←/→ ±10 s |
-| Ver erros sem terminal | botão **Mensagens** (também em `dados\app.log`) |
+| Ver erros sem terminal | botão **Mensagens** (também em `.baixador\app.log`) |
 | Ajustar bitrate com nome claro | **Configurações** → "Bitrate do MP3" |
 
 Nada disso exige editar arquivo nenhum.
@@ -106,5 +106,5 @@ Nenhum deles deve ir para o GitHub.
   simulado (cada widget registrado, cada botão clicado). Aparência/fonte podem
   precisar de ajuste fino no seu monitor.
 - Se algo falhar no Windows, o mais útil é abrir **Mensagens** na própria
-  janela (fica em `dados\app.log`) e, se precisar, a saída de
+  janela (fica em `.baixador\app.log`) e, se precisar, a saída de
   `python musica.py download "<URL>" --formato mp3` num terminal.

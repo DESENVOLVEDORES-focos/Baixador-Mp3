@@ -168,6 +168,16 @@ def _instalar_tk_falso() -> None:
     sys.modules["tkinter.filedialog"] = filedialog
 
 
+def esquecer_modulos(*nomes):
+    """Tira o módulo do cache e do atributo do pacote (ver test_central_app)."""
+    for nome in nomes:
+        sys.modules.pop(nome, None)
+        pacote, _, curto = nome.rpartition(".")
+        modulo_pacote = sys.modules.get(pacote)
+        if modulo_pacote is not None and hasattr(modulo_pacote, curto):
+            delattr(modulo_pacote, curto)
+
+
 class TestConstrucaoDaJanela(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -178,13 +188,12 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         raiz = Path(cls._temp.name)
         os.environ["BAIXADOR_DATA_DIR"] = str(raiz / ".baixador")
         # Recarrega a interface já com o Tk falso em sys.modules.
-        for modulo in ("interface",):
-            sys.modules.pop(modulo, None)
-        import interface
+        esquecer_modulos("baixador.app.interface")
+        from baixador.app import interface
 
         cls.interface = interface
-        from configuracoes import Configuracoes
-        from preferencias import Preferencias
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.nucleo.preferencias import Preferencias
 
         cls.controlador = interface.ControladorInterface(
             configuracoes=Configuracoes(raiz=raiz),
@@ -199,7 +208,7 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         for modulo in list(sys.modules):
             if modulo.startswith("tkinter"):
                 sys.modules.pop(modulo, None)
-        sys.modules.pop("interface", None)
+        esquecer_modulos("baixador.app.interface")
 
     def test_todas_as_abas_foram_montadas(self):
         for atributo in ("aba_baixar", "aba_fila", "aba_historico", "aba_config"):
@@ -217,7 +226,7 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         self.assertIn("oficial", colunas)
 
     def test_progresso_atualiza_linha_sem_quebrar(self):
-        from downloader import Progresso
+        from baixador.web.downloader import Progresso
 
         item = self.app.downloads_tree.insert("", "end", values=("",) * 6)
         self.app._aplicar_progresso(item, Progresso(
@@ -227,7 +236,7 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         self.assertIn("42", self.app.status_var.get())
 
     def test_progresso_sem_numero_nao_inventa_percentual(self):
-        from downloader import Progresso
+        from baixador.web.downloader import Progresso
 
         item = self.app.downloads_tree.insert("", "end", values=("",) * 6)
         self.app._aplicar_progresso(item, Progresso(etapa="Convertendo para MP3"))
@@ -250,7 +259,7 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         self.app.sobrescrita_var.set("renomear")
         self.app.limite_var.set("8")
         self.assertTrue(self.app._salvar_config(silencioso=True))
-        from preferencias import carregar
+        from baixador.nucleo.preferencias import carregar
 
         self.assertEqual(carregar(self.controlador._base).sobrescrita, "renomear")
 
@@ -281,7 +290,7 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         self.assertTrue(hasattr(self.app, "lote_urls_text"))
 
     def test_lista_playlist_na_tela_e_marca_sem_ao_vivo(self):
-        from playlist import ItemPlaylist, Playlist
+        from baixador.web.playlist import ItemPlaylist, Playlist
 
         lista = Playlist(titulo="Mix", url="https://y/playlist?list=X", itens=(
             ItemPlaylist(1, "a", "Song One (Official Video)", "https://y/a", 200),
@@ -310,7 +319,7 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         self.assertTrue(aviso.called)
 
     def test_playlist_na_fila_ignora_itens_indisponiveis(self):
-        from playlist import ItemPlaylist, Playlist
+        from baixador.web.playlist import ItemPlaylist, Playlist
 
         self.app._playlist_atual = Playlist(titulo="Mix", url="u", itens=(
             ItemPlaylist(1, "a", "Um", "https://127.0.0.1:1/a.mp3"),
@@ -325,8 +334,8 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         self.assertNotIn("https://127.0.0.1:1/b.mp3", urls)
 
     def test_pesquisa_mostra_tipo_e_permite_abrir_playlist_sem_link(self):
-        from pesquisa import ResultadoPesquisa
-        from playlist import ItemPlaylist, Playlist
+        from baixador.web.pesquisa import ResultadoPesquisa
+        from baixador.web.playlist import ItemPlaylist, Playlist
 
         video = ResultadoPesquisa("a", "Música", "Canal", 200,
                                   "https://youtu.be/a", tipo="video")
@@ -362,7 +371,7 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         self.assertEqual(len(self.app.lote_tree.get_children()), 1)
 
     def test_aba_lote_pesquisa_playlists_sem_colar_url(self):
-        from pesquisa import ResultadoPesquisa
+        from baixador.web.pesquisa import ResultadoPesquisa
 
         lista = ResultadoPesquisa(
             "PL9", "MPB Mix", "Canal Y", None,
@@ -380,7 +389,7 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         self.assertEqual(linhas[0][2], 12)
 
     def test_usar_url_do_resultado_preenche_o_campo_de_download(self):
-        from pesquisa import ResultadoPesquisa
+        from baixador.web.pesquisa import ResultadoPesquisa
 
         video = ResultadoPesquisa("a", "Música", "Canal", 200,
                                   "https://youtu.be/abc", tipo="video")
@@ -410,7 +419,7 @@ class TestConstrucaoDaJanela(unittest.TestCase):
         self.assertEqual(pedidos, [["https://y/x"]])
 
     def test_botao_de_atualizar_ytdlp_mostra_o_que_aconteceu(self):
-        from atualizacao import ResultadoAtualizacao
+        from baixador.midia.atualizacao import ResultadoAtualizacao
 
         resultado = ResultadoAtualizacao(
             ok=False, versao_antes="2024.1", versao_depois="2024.1",

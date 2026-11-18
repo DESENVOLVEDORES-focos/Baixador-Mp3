@@ -20,6 +20,21 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
+def esquecer_modulos(*nomes):
+    """Tira o módulo do cache **e** do atributo do pacote.
+
+    Só remover de ``sys.modules`` não basta: ``from baixador.app import
+    central_app`` devolve o atributo antigo do pacote, que foi importado quando
+    o tkinter falso ainda não existia (``tk`` ficava ``None``).
+    """
+    for nome in nomes:
+        sys.modules.pop(nome, None)
+        pacote, _, curto = nome.rpartition(".")
+        modulo_pacote = sys.modules.get(pacote)
+        if modulo_pacote is not None and hasattr(modulo_pacote, curto):
+            delattr(modulo_pacote, curto)
+
+
 _widgets_criados: list = []
 
 
@@ -218,15 +233,15 @@ class TestCentralApp(unittest.TestCase):
         os.environ["BAIXADOR_DATA_DIR"] = str(raiz / ".baixador")
         (raiz / "Musicas").mkdir(exist_ok=True)
         (raiz / "ferramentas").mkdir(exist_ok=True)
-        for modulo in ("central_app", "central", "central_servicos"):
-            sys.modules.pop(modulo, None)
-        from configuracoes import Configuracoes
-        from preferencias import Preferencias
+        esquecer_modulos("baixador.app.central_app", "baixador.app.central",
+                          "baixador.app.central_servicos")
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.nucleo.preferencias import Preferencias
 
-        import central_app
+        from baixador.app import central_app
 
         cls.modulo = central_app
-        from central import Central
+        from baixador.app.central import Central
 
         cls.central = Central(
             Configuracoes(raiz=raiz, diretorio_musicas=raiz / "Musicas"),
@@ -242,8 +257,8 @@ class TestCentralApp(unittest.TestCase):
         for modulo in list(sys.modules):
             if modulo.startswith("tkinter"):
                 sys.modules.pop(modulo, None)
-        for modulo in ("central_app", "central", "central_servicos"):
-            sys.modules.pop(modulo, None)
+        esquecer_modulos("baixador.app.central_app", "baixador.app.central",
+                          "baixador.app.central_servicos")
 
     # -- estrutura ---------------------------------------------------------
     def test_todas_as_paginas_existem(self):
@@ -276,7 +291,7 @@ class TestCentralApp(unittest.TestCase):
         return decorador
 
     def test_pesquisar_lista_e_adiciona_a_cesta(self):
-        from pesquisa import ResultadoPesquisa
+        from baixador.web.pesquisa import ResultadoPesquisa
 
         video = ResultadoPesquisa("a", "Música Um", "Canal X", 200,
                                   "https://youtu.be/a", tipo="video")
@@ -303,7 +318,7 @@ class TestCentralApp(unittest.TestCase):
         self.assertEqual(self.central.selecao.quantidade(), 2)
 
     def test_cesta_acumula_de_varias_pesquisas(self):
-        from selecao import ItemSelecao
+        from baixador.nucleo.selecao import ItemSelecao
 
         self.central.selecao.limpar()
         self.app.mostrar("fila")
@@ -321,7 +336,7 @@ class TestCentralApp(unittest.TestCase):
         self.central.selecao.limpar()
 
     def test_abrir_playlist_e_marcar_sem_ao_vivo(self):
-        from playlist import ItemPlaylist, Playlist
+        from baixador.web.playlist import ItemPlaylist, Playlist
 
         playlist = Playlist(titulo="Mix", url="https://y/playlist?list=1", itens=(
             ItemPlaylist(1, "a", "Song One", "https://y/a", 200),
@@ -417,7 +432,7 @@ class TestNadaDeBotaoMorto(unittest.TestCase):
     def setUpClass(cls):
         TestCentralApp.setUpClass()
         cls.origem = TestCentralApp
-        cls.fonte = (Path(__file__).resolve().parents[1] / "central_app.py").read_text(
+        cls.fonte = (Path(__file__).resolve().parents[1] / "baixador" / "app" / "central_app.py").read_text(
             encoding="utf-8")
 
     @classmethod
@@ -524,7 +539,7 @@ class TestListarMaisNaTela(unittest.TestCase):
         TestCentralApp.tearDownClass()
 
     def _playlist(self, quantidade: int, total: int | None, inicio: int = 1):
-        from playlist import ItemPlaylist, Playlist
+        from baixador.web.playlist import ItemPlaylist, Playlist
 
         itens = tuple(
             ItemPlaylist(indice=numero, id=f"id{numero}",
@@ -608,7 +623,7 @@ class TestCestaAvancadaNaTela(unittest.TestCase):
         self.app.mostrar("fila")
 
     def _encher(self, quantidade: int = 3):
-        from selecao import ItemSelecao
+        from baixador.nucleo.selecao import ItemSelecao
 
         for numero in range(quantidade):
             self.central.selecao.adicionar(ItemSelecao(
@@ -815,7 +830,7 @@ class TestPlayerNaTela(unittest.TestCase):
         TestCentralApp.tearDownClass()
 
     def setUp(self):
-        from reprodutor import Faixa
+        from baixador.midia.reprodutor import Faixa
 
         self.central.reprodutor.definir_fila(
             [Faixa("/tmp/x.mp3", "Faixa", "Artista", duracao=100.0)])
@@ -836,7 +851,7 @@ class TestPlayerNaTela(unittest.TestCase):
         self.assertAlmostEqual(busca.call_args[0][0], 50.0, places=1)
 
     def test_clique_sem_duracao_avisa_em_vez_de_fingir(self):
-        from reprodutor import Faixa
+        from baixador.midia.reprodutor import Faixa
 
         self.central.reprodutor.definir_fila([Faixa("/tmp/x.mp3", "Sem duração")])
         evento = type("E", (), {"x": 10})()
@@ -879,7 +894,7 @@ class TestPlayerNaTela(unittest.TestCase):
 
 def musica_de_teste(**campos):
     """``Musica`` completa (o dataclass exige todos os campos)."""
-    from biblioteca import Musica
+    from baixador.nucleo.biblioteca import Musica
 
     dados = dict(id=1, caminho="/tmp/nao_existe.mp3", titulo="Faixa",
                  artista="Artista", album="Álbum", ano="", genero="", faixa="",
@@ -904,7 +919,7 @@ class TestPreviaDeCapa(unittest.TestCase):
 
     @staticmethod
     def _candidatos():
-        from capas import CapaEncontrada
+        from baixador.midia.capas import CapaEncontrada
 
         def _jpeg(cor: int) -> bytes:
             from PIL import Image
@@ -957,7 +972,7 @@ class TestPreviaDeCapa(unittest.TestCase):
                 patch.object(self.app, "_atualizar_biblioteca"), \
                 patch.object(self.app, "_mostrar_capa_biblioteca"), \
                 patch.object(self.central, "incorporar_capa") as incorporar:
-            from colecoes import ResultadoCobertura
+            from baixador.midia.colecoes import ResultadoCobertura
 
             incorporar.return_value = ResultadoCobertura(
                 caminho="/tmp/x.mp3", ok=True, mensagem="Capa incorporada ao MP3.")
@@ -1021,7 +1036,7 @@ class TestCandidatosDeCapaNoCentral(unittest.TestCase):
         TestCentralApp.tearDownClass()
 
     def test_sem_artista_nem_album_nao_consulta_fonte(self):
-        with patch("capas.GerenciadorCapas") as gerenciador:
+        with patch("baixador.midia.capas.GerenciadorCapas") as gerenciador:
             resultado = self.central.capa_candidatos(
                 musica_de_teste(titulo="Só título", artista="", album=""))
         self.assertEqual(resultado, [])
@@ -1031,7 +1046,7 @@ class TestCandidatosDeCapaNoCentral(unittest.TestCase):
         falso = MagicMock()
         falso.candidatos.return_value = []
         falso.cliente.get_bytes.return_value = b"nao-e-imagem"
-        with patch("capas.GerenciadorCapas", return_value=falso):
+        with patch("baixador.midia.capas.GerenciadorCapas", return_value=falso):
             resultado = self.central.capa_candidatos(
                 musica_de_teste(titulo="T", artista="A", album="Alb"))
         self.assertEqual(resultado, [])
@@ -1106,7 +1121,7 @@ class TestDetalhesDoResultado(unittest.TestCase):
         self.assertIn("Já na biblioteca", self.app.pesquisa_detalhe.get())
 
     def test_miniatura_vem_do_cache_sem_rede(self):
-        with patch("thumbs.obter", return_value=None) as obter, \
+        with patch("baixador.web.thumbs.obter", return_value=None) as obter, \
                 patch.object(self.app, "_executar",
                              side_effect=lambda t, c=None, f=None:
                              c(t()) if c else t()):
@@ -1115,7 +1130,7 @@ class TestDetalhesDoResultado(unittest.TestCase):
         self.assertIn("indisponível", _texto_do_widget(self.app.pesquisa_thumb))
 
     def test_sem_thumbnail_nao_tenta_baixar(self):
-        with patch("thumbs.obter") as obter:
+        with patch("baixador.web.thumbs.obter") as obter:
             self._selecionar(self._resultado(thumbnail=""))
         obter.assert_not_called()
 
@@ -1139,7 +1154,7 @@ class TestBuscaEFormatoNaCesta(unittest.TestCase):
         TestCentralApp.tearDownClass()
 
     def setUp(self):
-        from selecao import ItemSelecao
+        from baixador.nucleo.selecao import ItemSelecao
 
         self.central.selecao.limpar()
         self.central.selecao.adicionar_varios([

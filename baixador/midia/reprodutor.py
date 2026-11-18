@@ -74,7 +74,7 @@ def localizar_ffplay(config: Any = None) -> list[str]:
     # Fallback: usar o mesmo ffmpeg do programa não toca som (é conversor);
     # então procuramos ffplay ao lado dele.
     try:
-        from configuracoes import CONFIG
+        from baixador.nucleo.configuracoes import CONFIG
 
         ffmpeg = Path(CONFIG.caminho_ffmpeg())
         vizinho = ffmpeg.with_name("ffplay.exe" if sys.platform == "win32" else "ffplay")

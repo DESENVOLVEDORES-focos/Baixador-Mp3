@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from previa import analisar
+from baixador.midia.previa import analisar
 
 # Tempo de download aproximado usado na estimativa da cesta (MP3 ~128 kbps).
 BYTES_POR_SEGUNDO = 16_000

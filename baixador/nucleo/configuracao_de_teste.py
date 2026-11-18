@@ -9,7 +9,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from configuracoes import Configuracoes
+from baixador.nucleo.configuracoes import Configuracoes
 
 
 def configuracao_de_teste(raiz: Path | None = None) -> Configuracoes:

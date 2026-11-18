@@ -8,8 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from biblioteca import Biblioteca, chave_busca
-from configuracoes import Configuracoes
+from baixador.nucleo.biblioteca import Biblioteca, chave_busca
+from baixador.nucleo.configuracoes import Configuracoes
 
 
 def _ffmpeg() -> str | None:

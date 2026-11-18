@@ -67,7 +67,7 @@ O que vale saber:
   recebe compositor, disco/total, ISRC, a origem (`fonte`, URL do vídeo) e, se
   você ligar, **ReplayGain medido** com o FFmpeg.
 - **Nada se perde de vista**: toda mensagem e todo erro aparecem no botão
-  **Mensagens** (e ficam em `dados\app.log`) — não é preciso abrir terminal.
+  **Mensagens** (e ficam em `.baixador\app.log`) — não é preciso abrir terminal.
 
 ## Como usar (fluxo rápido)
 
@@ -187,17 +187,46 @@ mensagem clara (`[ERRO] ERROR: ...`) e nunca como traceback.
 | `.baixador\cookies.txt` | cópia gerenciada dos seus cookies |
 | `.baixador\fila.json` | fila persistente |
 | `.baixador\historico.jsonl` / `erros.jsonl` | histórico e erros (JSON Lines) |
+| `.baixador\biblioteca.db` | biblioteca SQLite (a fonte de verdade das músicas) |
+| `.baixador\app.log` | log do botão **Mensagens** (o que apareceu na tela) |
 | `.baixador\thumbs\` | cache das miniaturas da pesquisa |
+| `Capas\` | capas baixadas que ainda não foram gravadas no MP3 |
+
+> A pasta `.baixador\` começa com ponto, então o Explorer e o `dir` a escondem.
+> Use `dir /a` no cmd ou marque "Itens ocultos" no Explorer para vê-la. Ela é
+> criada na **primeira vez que o programa abre**, não pelo `configurar.bat`.
 
 Downloads acontecem numa pasta de trabalho dentro de `.baixador\` e só o
 arquivo final é movido para `Musicas\`/`Videos\`: nenhum `.part`/`.m4a`
 intermediário fica nas suas pastas.
 
+## Estrutura do projeto
+
+O código está num pacote (`baixador/`), separado por responsabilidade — nada
+mais solto na raiz além da entrada `main.py` e dos `.bat`:
+
+```
+main.py                 entrada (Central Musical; --classica abre a antiga)
+baixador/
+  nucleo/               configuração, preferências, biblioteca, fila,
+                        histórico, limites, organização de arquivos
+  midia/                MP3/ID3/ReplayGain, capas, prévia, reprodutor
+  web/                  pesquisa, playlists, download (yt-dlp), cookies, IA
+  app/                  Central Musical (central_app.py), interface clássica
+                        (interface.py) e os serviços que ligam tudo
+tests/                  suite (pytest) — 578 testes
+ferramentas/            ffmpeg.exe / yt-dlp.exe (baixados pelo configurar.bat)
+```
+
+Cada pacote tem `__init__.py` com um resumo do que mora nele. Imports são
+absolutos (`from baixador.web import pesquisa`), então nada depende de rodar a
+partir de uma pasta específica.
+
 ## Testes
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m pyflakes *.py tests/*.py   # deve sair vazio
+python -m pyflakes main.py baixador tests   # deve sair vazio
 python -m pytest -q
 ```
 

@@ -29,7 +29,7 @@ jobs:
       # Python para o resultado ser idêntico nos dois sistemas.
       - name: Análise estática (pyflakes)
         run: |
-          python -c "import glob,subprocess,sys; alvos=glob.glob('*.py')+glob.glob('tests/*.py'); sys.exit(subprocess.call([sys.executable,'-m','pyflakes',*alvos]))"
+          python -c "import glob,subprocess,sys; alvos=glob.glob('*.py')+glob.glob('baixador/**/*.py',recursive=True)+glob.glob('tests/*.py'); sys.exit(subprocess.call([sys.executable,'-m','pyflakes',*alvos]))"
 
       - name: Compilação
         run: python -m compileall -q . -x '(\.git|ferramentas)'
@@ -60,4 +60,4 @@ jobs:
           path: saida-testes.txt
 
       - name: Interface importa sem erro (sem abrir janela)
-        run: python -c "import interface, musica, downloader, pesquisa, preferencias, cookies_youtube, thumbs; print('imports ok')"
+        run: python -c "from baixador.app import interface, musica, central; from baixador.web import downloader, pesquisa, cookies_youtube, thumbs; from baixador.nucleo import preferencias; print('imports ok')"

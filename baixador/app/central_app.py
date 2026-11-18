@@ -20,8 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-import tema
-from central import Central
+from baixador.app import tema
+from baixador.app.central import Central
 
 log = logging.getLogger("baixador.central.app")
 
@@ -960,7 +960,7 @@ class CentralApp:
         grupos = self.central.selecao.agrupado_por_origem()
         resumo_cesta = ", ".join(f"{nome}: {qtd}" for nome, qtd in grupos.items())
         segundos, bytes_ = self.central.selecao.estimativa()
-        from limites import tamanho_legivel, tempo_legivel
+        from baixador.nucleo.limites import tamanho_legivel, tempo_legivel
 
         repetidas = len(self.central.selecao.ja_na_biblioteca(
             self.central.biblioteca))
@@ -1127,7 +1127,7 @@ class CentralApp:
                 "sim" if musica.tem_capa else "não"))
         total = self.central.biblioteca.contar()
         segundos = sum(m.duracao or 0 for m in musicas)
-        from limites import tempo_legivel
+        from baixador.nucleo.limites import tempo_legivel
 
         self.biblioteca_resumo_var.set(
             f"{len(musicas)} de {total} música(s) · {tempo_legivel(int(segundos))}"
@@ -1777,7 +1777,7 @@ class CentralApp:
     def _mostrar_filtros_pesquisa(self) -> None:
         """Diz quantos resultados os filtros esconderam (e por quê)."""
         contagem = dict(getattr(self.central, "ultima_contagem_pesquisa", {}) or {})
-        from pesquisa import descrever_filtro
+        from baixador.web.pesquisa import descrever_filtro
 
         resumo = descrever_filtro(contagem)
         brutos = len(getattr(self, "_resultados_brutos", []) or [])
@@ -1794,7 +1794,7 @@ class CentralApp:
         brutos = list(getattr(self, "_resultados_brutos", []) or [])
         if not brutos:
             return
-        from pesquisa import organizar_resultados
+        from baixador.web.pesquisa import organizar_resultados
 
         filtrados, contagem = organizar_resultados(
             brutos,
@@ -1863,7 +1863,7 @@ class CentralApp:
         self.pesquisa_thumb.configure(text="carregando miniatura...", image="")
 
         def trabalho() -> Any:
-            from thumbs import obter
+            from baixador.web.thumbs import obter
 
             return obter(url, self.central.config.dados)
 
@@ -1955,7 +1955,7 @@ class CentralApp:
                 aprovados.append(str(item.indice))
         if aprovados:
             self.arvore_playlist.selection_set(aprovados)
-        from playlist import analisar
+        from baixador.web.playlist import analisar
 
         resumo = analisar(playlist.itens)
         self.playlist_resumo_var.set(resumo.como_texto())
@@ -2013,7 +2013,7 @@ class CentralApp:
             self.arvore_playlist.selection_remove(itens)
 
     def _filtrar_ao_vivo_playlist(self) -> None:
-        from previa import analisar
+        from baixador.midia.previa import analisar
 
         escolhidos = []
         fora = 0
@@ -2130,7 +2130,7 @@ class CentralApp:
             previa = self.central.aplicacao.previa
             pasta = previa.pasta_temporaria()
             arquivo = previa.baixar_amostra(resultado.url, pasta)
-            from previa import pasta_para_tocar
+            from baixador.midia.previa import pasta_para_tocar
 
             return pasta_para_tocar(arquivo, pasta)
 
@@ -2518,7 +2518,7 @@ class CentralApp:
             row=0, column=2, padx=4)
         ttk.Label(downloads, text="Bitrate do MP3:").grid(
             row=1, column=0, sticky="e", padx=6)
-        from preferencias import OPCOES_BITRATE, descrever_bitrate
+        from baixador.nucleo.preferencias import OPCOES_BITRATE, descrever_bitrate
 
         self._bitrates = dict(OPCOES_BITRATE)
         self.config_qualidade = tk.StringVar(
@@ -2993,7 +2993,7 @@ def iniciar(configuracoes: Any = None) -> None:
         raise SystemExit("Tkinter não está disponível neste Python.")
     from logging.handlers import RotatingFileHandler
 
-    from central import Central as _Central
+    from baixador.app.central import Central as _Central
 
     central = _Central(configuracoes)
     try:

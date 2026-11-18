@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gerenciador import GerenciadorDownloads, ItemDownload
+from baixador.nucleo.gerenciador import GerenciadorDownloads, ItemDownload
 
 
 class _AplicacaoFalsa:
@@ -175,8 +175,8 @@ class TestRetomadaPelaCentral(unittest.TestCase):
         import os
         from unittest.mock import patch as _patch
 
-        from configuracoes import Configuracoes
-        from preferencias import Preferencias
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.nucleo.preferencias import Preferencias
 
         self.raiz = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.raiz, True)
@@ -191,7 +191,7 @@ class TestRetomadaPelaCentral(unittest.TestCase):
                                   downloads_simultaneos=1)
 
     def _abrir(self):
-        from central import Central
+        from baixador.app.central import Central
 
         central = Central(self.config, self.prefs)
         central.aplicacao.baixar = lambda *a, **k: (True, "ok")

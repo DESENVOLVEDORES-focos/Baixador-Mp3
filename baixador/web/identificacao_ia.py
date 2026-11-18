@@ -27,9 +27,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import api_ia
-from configuracoes import CONFIG, Configuracoes
-from inteligencia import ClienteHTTP, ClienteHTTPUrllib, ErroAPI, InfoMusica
+from baixador.web import api_ia
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
+from baixador.web.inteligencia import ClienteHTTP, ClienteHTTPUrllib, ErroAPI, InfoMusica
 
 log = logging.getLogger("baixador.ia_identificacao")
 

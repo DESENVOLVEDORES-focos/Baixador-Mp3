@@ -10,8 +10,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from configuracoes import CONFIG, Configuracoes
-from downloader import validar_url
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
+from baixador.web.downloader import validar_url
 
 
 @dataclass

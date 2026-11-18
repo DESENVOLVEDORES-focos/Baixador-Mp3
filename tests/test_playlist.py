@@ -14,8 +14,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import playlist
-from configuracoes import Configuracoes
+from baixador.web import playlist
+from baixador.nucleo.configuracoes import Configuracoes
+from tests.test_central_app import esquecer_modulos
 
 
 def _dados_youtube() -> dict:
@@ -184,7 +185,7 @@ class TestListarSemBaixar(unittest.TestCase):
         self.config = Configuracoes(raiz=self.raiz)
 
     def test_url_invalida_falha_antes_de_chamar_ytdlp(self):
-        with patch("playlist.subprocess.run") as executar:
+        with patch("baixador.web.playlist.subprocess.run") as executar:
             with self.assertRaises(playlist.ErroPlaylist):
                 playlist.listar("minha musica", config=self.config)
         executar.assert_not_called()
@@ -193,7 +194,7 @@ class TestListarSemBaixar(unittest.TestCase):
         saida = json.dumps(_dados_youtube())
         concluido = type("P", (), {"returncode": 0, "stdout": saida,
                                    "stderr": ""})()
-        with patch("playlist.subprocess.run", return_value=concluido) as executar:
+        with patch("baixador.web.playlist.subprocess.run", return_value=concluido) as executar:
             lista = playlist.listar("https://www.youtube.com/playlist?list=PLx",
                                    config=self.config)
         self.assertEqual(lista.quantidade, 4)
@@ -204,7 +205,7 @@ class TestListarSemBaixar(unittest.TestCase):
         saida = json.dumps({"title": "Vazia", "entries": []})
         concluido = type("P", (), {"returncode": 0, "stdout": saida,
                                    "stderr": ""})()
-        with patch("playlist.subprocess.run", return_value=concluido):
+        with patch("baixador.web.playlist.subprocess.run", return_value=concluido):
             with self.assertRaises(playlist.ErroPlaylist) as contexto:
                 playlist.listar("https://www.youtube.com/playlist?list=PLv",
                                 config=self.config)
@@ -214,14 +215,14 @@ class TestListarSemBaixar(unittest.TestCase):
         falhou = type("P", (), {
             "returncode": 1, "stdout": "",
             "stderr": "WARNING: bla\nERROR: [youtube] Playlist privada"})()
-        with patch("playlist.subprocess.run", return_value=falhou):
+        with patch("baixador.web.playlist.subprocess.run", return_value=falhou):
             with self.assertRaises(playlist.ErroPlaylist) as contexto:
                 playlist.listar("https://www.youtube.com/playlist?list=PLp",
                                 config=self.config)
         self.assertIn("Playlist privada", str(contexto.exception))
 
     def test_timeout_vira_erro_em_portugues(self):
-        with patch("playlist.subprocess.run",
+        with patch("baixador.web.playlist.subprocess.run",
                    side_effect=playlist.subprocess.TimeoutExpired("yt-dlp", 1)):
             with self.assertRaises(playlist.ErroPlaylist) as contexto:
                 playlist.listar("https://www.youtube.com/playlist?list=PLt",
@@ -238,14 +239,14 @@ class TestResumoDaPlaylist(unittest.TestCase):
 
     @staticmethod
     def _item(indice, titulo, duracao=200, disponivel=True):
-        from playlist import ItemPlaylist
+        from baixador.web.playlist import ItemPlaylist
 
         return ItemPlaylist(indice=indice, id=f"id{indice}", titulo=titulo,
                             url=f"https://youtu.be/id{indice}",
                             duracao=duracao, disponivel=disponivel)
 
     def test_conta_disponiveis_e_privados(self):
-        from playlist import analisar
+        from baixador.web.playlist import analisar
 
         resumo = analisar([self._item(1, "A"), self._item(2, "B"),
                            self._item(3, "Privada", disponivel=False)])
@@ -253,7 +254,7 @@ class TestResumoDaPlaylist(unittest.TestCase):
                           resumo.indisponiveis), (3, 2, 1))
 
     def test_soma_duracao_total_e_dos_disponiveis(self):
-        from playlist import analisar
+        from baixador.web.playlist import analisar
 
         resumo = analisar([self._item(1, "A", 200), self._item(2, "B", 100),
                            self._item(3, "C", 999, disponivel=False)])
@@ -261,7 +262,7 @@ class TestResumoDaPlaylist(unittest.TestCase):
         self.assertEqual(resumo.duracao_disponivel, 300)
 
     def test_acha_repetido_pelo_titulo_normalizado(self):
-        from playlist import analisar
+        from baixador.web.playlist import analisar
 
         resumo = analisar([self._item(1, "Faixa A (Official Video)"),
                            self._item(2, "FAIXA A"),
@@ -269,7 +270,7 @@ class TestResumoDaPlaylist(unittest.TestCase):
         self.assertEqual(resumo.duplicados, 1)
 
     def test_privado_nao_conta_como_repetido_duplicado(self):
-        from playlist import analisar
+        from baixador.web.playlist import analisar
 
         resumo = analisar([self._item(1, "A"),
                            self._item(2, "A", disponivel=False)])
@@ -277,7 +278,7 @@ class TestResumoDaPlaylist(unittest.TestCase):
         self.assertEqual(resumo.indisponiveis, 1)
 
     def test_texto_do_resumo_e_honesto(self):
-        from playlist import analisar
+        from baixador.web.playlist import analisar
 
         resumo = analisar([self._item(1, "A", 3600),
                            self._item(2, "B", 1200, disponivel=False)])
@@ -287,7 +288,7 @@ class TestResumoDaPlaylist(unittest.TestCase):
         self.assertIn("1 privado/removido", texto)
 
     def test_playlist_vazia_nao_quebra(self):
-        from playlist import analisar
+        from baixador.web.playlist import analisar
 
         resumo = analisar([])
         self.assertEqual(resumo.quantidade, 0)
@@ -295,7 +296,7 @@ class TestResumoDaPlaylist(unittest.TestCase):
 
     def test_nada_e_removido_pela_analise(self):
         itens = [self._item(1, "A"), self._item(2, "A")]
-        from playlist import analisar
+        from baixador.web.playlist import analisar
 
         analisar(itens)
         self.assertEqual(len(itens), 2)
@@ -307,11 +308,10 @@ class TestVisualizacaoDePlaylistNaTela(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import os
-        import sys
 
         from unittest.mock import patch as _patch
 
-        from tests.test_central_app import _instalar_tk_falso
+        from tests.test_central_app import esquecer_modulos, _instalar_tk_falso
 
         cls._env = _patch.dict(os.environ)
         cls._env.start()
@@ -321,12 +321,12 @@ class TestVisualizacaoDePlaylistNaTela(unittest.TestCase):
         os.environ["BAIXADOR_DATA_DIR"] = str(raiz / ".baixador")
         (raiz / "Musicas").mkdir(exist_ok=True)
         (raiz / "ferramentas").mkdir(exist_ok=True)
-        for modulo in ("central_app", "central", "central_servicos"):
-            sys.modules.pop(modulo, None)
-        import central_app
-        from central import Central
-        from configuracoes import Configuracoes
-        from preferencias import Preferencias
+        esquecer_modulos("baixador.app.central_app", "baixador.app.central",
+                          "baixador.app.central_servicos")
+        from baixador.app import central_app
+        from baixador.app.central import Central
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.nucleo.preferencias import Preferencias
 
         cls.modulo = central_app
         cls.central = Central(
@@ -346,11 +346,11 @@ class TestVisualizacaoDePlaylistNaTela(unittest.TestCase):
         for modulo in list(sys.modules):
             if modulo.startswith("tkinter"):
                 sys.modules.pop(modulo, None)
-        for modulo in ("central_app", "central", "central_servicos"):
-            sys.modules.pop(modulo, None)
+        esquecer_modulos("baixador.app.central_app", "baixador.app.central",
+                          "baixador.app.central_servicos")
 
     def _playlist(self, quantidade=3):
-        from playlist import ItemPlaylist, Playlist
+        from baixador.web.playlist import ItemPlaylist, Playlist
 
         itens = tuple(
             ItemPlaylist(indice=i, id=f"id{i}", titulo=f"Faixa {i}",
@@ -396,7 +396,7 @@ class TestVisualizacaoDePlaylistNaTela(unittest.TestCase):
         self.assertIn("Nenhum item", notificar.call_args[0][1])
 
     def test_salvar_playlist_aberta_guarda_so_o_que_existe(self):
-        from biblioteca import Musica
+        from baixador.nucleo.biblioteca import Musica
 
         self.app._playlist_aberta = self._playlist()
         musicas = []
@@ -427,7 +427,7 @@ class TestVisualizacaoDePlaylistNaTela(unittest.TestCase):
         self.assertIn("Nenhum dos 3", notificar.call_args[0][1])
 
     def test_ver_o_que_ja_tenho_lista_os_meus(self):
-        from biblioteca import Musica
+        from baixador.nucleo.biblioteca import Musica
 
         self.app._playlist_aberta = self._playlist()
         minha = Musica(id=1, caminho="/tmp/1.mp3", titulo="Faixa 1", artista="A",

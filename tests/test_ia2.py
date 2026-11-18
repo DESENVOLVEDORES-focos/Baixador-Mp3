@@ -17,16 +17,10 @@ import zlib
 from pathlib import Path
 from unittest.mock import patch
 
-from capas import (
-    GerenciadorCapas, extrair_id_youtube, processar_imagem, validar_imagem,
-)
-from inteligencia import (
-    AssistenteIAOpenAI, ConsultaMusica, ErroAPI, IdentificadorMusical,
-    InfoMusica, ProvedorDeezer, ProvedorITunes, ProvedorMusicBrainz,
-    analisar_titulo,
-)
-from integracao import AdaptadorMetadados
-from metadados import ProcessadorMusical, aplicar_metadados, ler_metadados
+from baixador.midia.capas import GerenciadorCapas, extrair_id_youtube, processar_imagem, validar_imagem
+from baixador.web.inteligencia import AssistenteIAOpenAI, ConsultaMusica, ErroAPI, IdentificadorMusical, InfoMusica, ProvedorDeezer, ProvedorITunes, ProvedorMusicBrainz, analisar_titulo
+from baixador.nucleo.integracao import AdaptadorMetadados
+from baixador.midia.metadados import ProcessadorMusical, aplicar_metadados, ler_metadados
 
 
 # ---------------------------------------------------------------------------
@@ -355,8 +349,8 @@ class TestIntegracaoComNucleo(unittest.TestCase):
             mp3 = mp3_falso(Path(temp))
             info = InfoMusica(titulo="Bohemian Rhapsody", artista="Queen", ano=1975)
             processador = self._processador(info)
-            with patch.dict(os.environ, {"BAIXADOR_METADATA_MODULE": "modulo_metadados"}), \
-                    patch("modulo_metadados.criar_processador_padrao",
+            with patch.dict(os.environ, {"BAIXADOR_METADATA_MODULE": "baixador.midia.modulo_metadados"}), \
+                    patch("baixador.midia.modulo_metadados.criar_processador_padrao",
                           return_value=processador, create=True):
                 adaptador = AdaptadorMetadados()  # carrega modulo_metadados pela env
                 self.assertTrue(adaptador.disponivel)

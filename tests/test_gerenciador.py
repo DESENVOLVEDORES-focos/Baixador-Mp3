@@ -12,8 +12,8 @@ import time
 import unittest
 from pathlib import Path
 
-from configuracoes import Configuracoes
-from gerenciador import ESTADOS, GerenciadorDownloads, ROTULO_ESTADO
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.nucleo.gerenciador import ESTADOS, GerenciadorDownloads, ROTULO_ESTADO
 
 
 class _AplicacaoFalsa:
@@ -29,7 +29,7 @@ class _AplicacaoFalsa:
     def baixar(self, url, formato, ao_progresso=None, politica=None, contexto=None):
         self.chamadas.append((url, formato))
         if ao_progresso is not None:
-            from downloader import Progresso
+            from baixador.web.downloader import Progresso
 
             ao_progresso(Progresso(percentual=40.0, etapa="Baixando"))
         time.sleep(self.atraso)

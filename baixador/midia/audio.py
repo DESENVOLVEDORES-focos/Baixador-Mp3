@@ -187,7 +187,7 @@ def aplicar_replaygain(caminho: str | Path, *, ffmpeg: str | None = None,
     Devolve ``(ok, mensagem)``. Sem medição real, devolve ``False`` — o arquivo
     nunca recebe um ganho inventado.
     """
-    from metadados import gravar_txxx
+    from baixador.midia.metadados import gravar_txxx
 
     medicao = medir_volume(caminho, ffmpeg=ffmpeg)
     if not medicao.ok:

@@ -441,7 +441,7 @@ Ordem de trabalho seguida (implementar → testar → corrigir → commitar):
 
 1. **Reprodutor na tela** (`66e2f03`): barra clicável com seek via `-ss`, tempo
    formatado, atalhos (Espaço/Ctrl+setas/Ctrl+N-P-L-R) e estado em
-   `dados/player.json` restaurado ao abrir e gravado ao fechar.
+   `.baixador/player.json` restaurado ao abrir e gravado ao fechar.
 2. **Botão morto** (`258e532`): `tests/test_botoes_vivos.py` abre as 10 páginas,
    coleta os 96 widgets com `command` e **executa** cada um sem dados e sem
    rede. Nenhum estourou (o único erro foi do próprio teste, que chamava um
@@ -459,7 +459,7 @@ Ordem de trabalho seguida (implementar → testar → corrigir → commitar):
    "salvar na biblioteca", "ver o que já tenho".
 8. **Ficha do resultado** (`b013564`): detalhes + miniatura em cache.
 9. **Cesta** (`fed8ae3`): busca interna com índice correto e formato em lote.
-10. **Mensagens na tela** (`ae2877e`): painel + `dados/app.log`.
+10. **Mensagens na tela** (`ae2877e`): painel + `.baixador/app.log`.
 11. **Bitrate explícito** (`6be0be2`): lista com significado de cada opção.
 12. **Integração real** (`eeaca16`): `tests/test_integracao_real.py` com MP3 do
     FFmpeg atravessando verificação → tags → biblioteca → playlist → cesta →
@@ -469,3 +469,32 @@ Estado: **578 testes, 1 pulado, 94 subtestes**, `pyflakes` limpo; pacote
 `Central_MP3_Teste.zip` extraído em pasta limpa e revalidado (mesma suíte e os
 35 módulos importando). O que não dá para testar aqui (som, janela real, rede
 das APIs) está listado em `README.md` e `COMECE_AQUI.md`.
+
+## 2026-11-18 — reorganização em pacote `baixador/` e correção dos caminhos
+
+**Pedido:** "arruma esses arquivos .py, estão todos soltos na raiz" e corrigir
+a documentação que apontava `dados\`, sendo que o programa grava em `.baixador\`.
+
+**Como foi feito (com os tropeços reais):**
+
+1. Medido o acoplamento antes de mover: 36 módulos, 95 arestas internas, 319
+   imports a reescrever, e **nenhum ciclo** quando se considera só imports de
+   nível de módulo (o `musica ↔ interface` era lazy, dentro de função).
+2. `git mv` para `baixador/{nucleo,midia,web,app}` — o histórico dos arquivos
+   foi preservado.
+3. Primeira reescrita automática **errou**: gerou `from baixador.web.nucleo
+   import ...` (pacote repetido). Revertido com `git checkout -- tests/
+   baixador/` e refeito com regra explícita por tipo de import.
+4. Segunda tentativa acertou o import, mas o regex de `patch("modulo.attr")`
+   também casou **nomes de arquivo**, produzindo coisas como
+   `"baixador.midia.previa.m4a"` (29 ocorrências). Localizado por grep e
+   corrigido por padrão de extensão.
+5. Testes que recarregam a interface depois de instalar um Tk falso passaram a
+   falhar em conjunto (o `sys.modules.pop` não limpa o atributo que o pacote
+   guarda). Criado o helper `esquecer_modulos()` nos testes.
+6. `BAIXADOR_METADATA_MODULE` passou a ser `baixador.midia.modulo_metadados`,
+   atualizado no código, nos testes e nas docstrings do contrato.
+
+**Resultado:** 578 passed, 1 skipped, 94 subtests; `pyflakes` e `compileall`
+limpos; `main.py --versao` = 6.0. Documentação corrigida em README,
+COMECE_AQUI, AUDITORIA, CHANGELOG e neste log.

@@ -14,16 +14,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import cookies_youtube
-from configuracoes import Configuracoes
-from downloader import Downloader, ResultadoDownload
-from interface import ControladorInterface
-from metadados import ler_metadados
-from pesquisa import Pesquisador
-from preferencias import (
-    Preferencias, carregar, mascarar_segredo, proteger_segredo,
-    revelar_segredo, salvar,
-)
+from baixador.web import cookies_youtube
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.web.downloader import Downloader, ResultadoDownload
+from baixador.app.interface import ControladorInterface
+from baixador.midia.metadados import ler_metadados
+from baixador.web.pesquisa import Pesquisador
+from baixador.nucleo.preferencias import Preferencias, carregar, mascarar_segredo, proteger_segredo, revelar_segredo, salvar
 
 COOKIES_V1 = (
     "# Netscape HTTP Cookie File\n"
@@ -219,13 +216,13 @@ class TestControladorInterface(AmbienteTemporario):
         self.assertEqual(statuses.count("sucesso"), 2)
 
     def test_download_mp3_passa_por_metadados_e_capa_da_ia2(self):
-        from integracao import AdaptadorMetadados
-        from metadados import ProcessadorMusical
+        from baixador.nucleo.integracao import AdaptadorMetadados
+        from baixador.midia.metadados import ProcessadorMusical
         from tests.test_ia2 import png_bytes
 
         class IdFalso:
             def identificar(self, titulo, canal=None):  # noqa: ANN001
-                from inteligencia import InfoMusica
+                from baixador.web.inteligencia import InfoMusica
                 return InfoMusica(titulo="Bohemian Rhapsody", artista="Queen",
                                   album="A Night at the Opera", ano=1975,
                                   genero="Rock", fonte="teste")

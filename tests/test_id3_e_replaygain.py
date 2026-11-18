@@ -16,19 +16,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from audio import (
-    ALVO_PADRAO,
-    aplicar_replaygain,
-    ganho_replaygain,
-    medir_volume,
-)
-from inteligencia import InfoMusica
-from metadados import (
-    aplicar_metadados,
-    gravar_txxx,
-    ler_metadados,
-    ler_txxx,
-)
+from baixador.midia.audio import ALVO_PADRAO, aplicar_replaygain, ganho_replaygain, medir_volume
+from baixador.web.inteligencia import InfoMusica
+from baixador.midia.metadados import aplicar_metadados, gravar_txxx, ler_metadados, ler_txxx
 
 FFMPEG = shutil.which("ffmpeg")
 
@@ -112,7 +102,7 @@ class TestId3Estendido(BaseComMp3):
                          ("T", "A", "Alb"))
 
     def test_arquivo_invalido_levanta(self):
-        from metadados import ErroMetadados
+        from baixador.midia.metadados import ErroMetadados
 
         vazio = self.pasta / "vazio.mp3"
         vazio.write_bytes(b"")
@@ -187,8 +177,8 @@ class TestIntegracaoComPreferencias(unittest.TestCase):
     def test_replaygain_chega_na_configuracao(self):
         from dataclasses import replace
 
-        from configuracao_de_teste import configuracao_de_teste
-        from preferencias import Preferencias, derivar_configuracoes
+        from baixador.nucleo.configuracao_de_teste import configuracao_de_teste
+        from baixador.nucleo.preferencias import Preferencias, derivar_configuracoes
 
         base = configuracao_de_teste()
         prefs = replace(Preferencias(), replaygain=True,
@@ -197,7 +187,7 @@ class TestIntegracaoComPreferencias(unittest.TestCase):
         self.assertTrue(config.replaygain)
 
     def test_padrao_desligado(self):
-        from configuracao_de_teste import configuracao_de_teste
+        from baixador.nucleo.configuracao_de_teste import configuracao_de_teste
 
         self.assertFalse(configuracao_de_teste().replaygain)
 
@@ -210,7 +200,7 @@ class TestBitrateExplicito(unittest.TestCase):
     """A tela mostra bitrate com nome claro e o núcleo recebe o código certo."""
 
     def test_descricao_de_cada_opcao(self):
-        from preferencias import OPCOES_BITRATE, descrever_bitrate
+        from baixador.nucleo.preferencias import OPCOES_BITRATE, descrever_bitrate
 
         self.assertEqual(len(OPCOES_BITRATE), len({c for c, _d in OPCOES_BITRATE}))
         self.assertIn("320", descrever_bitrate("320K"))
@@ -224,7 +214,7 @@ class TestBitrateExplicito(unittest.TestCase):
         try:
             app = TestCentralApp.app
             app.mostrar("config")
-            from preferencias import descrever_bitrate
+            from baixador.nucleo.preferencias import descrever_bitrate
 
             app.config_qualidade.set(descrever_bitrate("192K"))
             self.assertEqual(app._codigo_do_bitrate(), "192K")
@@ -236,7 +226,7 @@ class TestBitrateExplicito(unittest.TestCase):
             TestCentralApp.tearDownClass()
 
     def test_valor_que_chega_ao_yt_dlp(self):
-        from downloader import Downloader
+        from baixador.web.downloader import Downloader
 
         class Falso:
             qualidade_mp3 = "192K"
@@ -272,7 +262,7 @@ class TestBitrateExplicito(unittest.TestCase):
     def test_preferencia_invalida_e_recusada(self):
         from dataclasses import replace
 
-        from preferencias import Preferencias
+        from baixador.nucleo.preferencias import Preferencias
 
         with self.assertRaises(ValueError):
             replace(Preferencias(), qualidade_mp3="muito").validar()

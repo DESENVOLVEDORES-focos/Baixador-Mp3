@@ -29,7 +29,7 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from configuracoes import CONFIG, Configuracoes
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
 
 log = logging.getLogger("baixador.preferencias")
 
@@ -267,7 +267,7 @@ def aplicar_ao_ambiente(prefs: Preferencias) -> None:
         # Chave importada como arquivo (api.txt), no mesmo espírito do
         # cookies.txt: vale sem o usuário digitar nada.
         try:
-            import api_ia
+            from baixador.web import api_ia
 
             chave = api_ia.ler_chave()
         except Exception:
@@ -283,7 +283,7 @@ def aplicar_ao_ambiente(prefs: Preferencias) -> None:
     else:
         os.environ["BAIXADOR_SEM_CAPA"] = "1"
     if prefs.metadados_ativos:
-        os.environ["BAIXADOR_METADATA_MODULE"] = "modulo_metadados"
+        os.environ["BAIXADOR_METADATA_MODULE"] = "baixador.midia.modulo_metadados"
     else:
         os.environ.pop("BAIXADOR_METADATA_MODULE", None)
 

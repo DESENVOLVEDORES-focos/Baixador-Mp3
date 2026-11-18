@@ -7,12 +7,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from configuracoes import Configuracoes
-from downloader import Downloader, ErroDownload, _encontrar_saida, validar_url
-from fila import FilaDownloads
-from historico import Historico
-from integracao import AdaptadorMetadados
-from pesquisa import Pesquisador, _converter_item, _carregar_json
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.web.downloader import Downloader, ErroDownload, _encontrar_saida, validar_url
+from baixador.nucleo.fila import FilaDownloads
+from baixador.nucleo.historico import Historico
+from baixador.nucleo.integracao import AdaptadorMetadados
+from baixador.web.pesquisa import Pesquisador, _converter_item, _carregar_json
 
 
 class ProcessoFalso:
@@ -60,8 +60,8 @@ class TestDownloader(unittest.TestCase):
     def test_diagnostico_lista_todas_as_dependencias_ausentes(self):
         with tempfile.TemporaryDirectory() as temp:
             config = Configuracoes(Path(temp))
-            with patch("configuracoes.shutil.which", return_value=None), patch(
-                "configuracoes.importlib.util.find_spec", return_value=None
+            with patch("baixador.nucleo.configuracoes.shutil.which", return_value=None), patch(
+                "baixador.nucleo.configuracoes.importlib.util.find_spec", return_value=None
             ):
                 with self.assertRaises(FileNotFoundError) as contexto:
                     config.verificar_dependencias()
@@ -95,7 +95,7 @@ class TestDownloader(unittest.TestCase):
             config = FakeConfig(Path(temp))
             config.preparar_diretorios()
             downloader = Downloader(config)  # type: ignore[arg-type]
-            with patch("downloader.subprocess.Popen", ProcessoFalso("", 0)):
+            with patch("baixador.web.downloader.subprocess.Popen", ProcessoFalso("", 0)):
                 with self.assertRaises(ErroDownload):
                     downloader.baixar("https://example.org/a", "mp3")
 
@@ -117,7 +117,7 @@ class TestDownloader(unittest.TestCase):
                     self.stdout = iter([str(alvo) + "\n"])
                     return self
 
-            with patch("downloader.subprocess.Popen", PopenQueCria("", 0)):
+            with patch("baixador.web.downloader.subprocess.Popen", PopenQueCria("", 0)):
                 resultado = downloader.baixar("https://example.org/a", "mp3")
             self.assertTrue(os.path.samefile(
                 resultado.caminho, config.musicas / "faixa [abc].mp3"))

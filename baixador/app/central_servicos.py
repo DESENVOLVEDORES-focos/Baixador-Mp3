@@ -14,10 +14,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from configuracoes import CONFIG, Configuracoes
-from preferencias import (
-    Preferencias, aplicar_ao_ambiente, carregar, derivar_configuracoes, salvar,
-)
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
+from baixador.nucleo.preferencias import Preferencias, aplicar_ao_ambiente, carregar, derivar_configuracoes, salvar
 
 log = logging.getLogger("baixador.central.servicos")
 
@@ -32,7 +30,7 @@ class ServicosBase:
                              else carregar(self._base))
         self._aplicar_ambiente(self.preferencias)
         self.config = self.derivar(self.preferencias)
-        from musica import Aplicacao
+        from baixador.app.musica import Aplicacao
 
         self.aplicacao = Aplicacao(self.config)
         self.config.preparar_diretorios()
@@ -64,7 +62,7 @@ class ServicosBase:
 
     # -- cookies do YouTube -------------------------------------------------
     def importar_cookies(self, origem: str | Path):
-        from cookies_youtube import importar
+        from baixador.web.cookies_youtube import importar
 
         info = importar(origem, self.config)
         self.salvar_preferencias_campo(cookies_caminho=str(info.caminho))
@@ -73,12 +71,12 @@ class ServicosBase:
         return info
 
     def status_cookies(self):
-        from cookies_youtube import status
+        from baixador.web.cookies_youtube import status
 
         return status(self.config)
 
     def remover_cookies(self) -> bool:
-        from cookies_youtube import remover
+        from baixador.web.cookies_youtube import remover
 
         removeu = remover(self.config)
         self.salvar_preferencias_campo(cookies_caminho="")
@@ -86,12 +84,12 @@ class ServicosBase:
 
     # -- chave de IA (api.txt) ---------------------------------------------
     def status_chave(self):
-        import api_ia
+        from baixador.web import api_ia
 
         return api_ia.status(self.config)
 
     def importar_chave(self, origem: str | Path):
-        import api_ia
+        from baixador.web import api_ia
 
         info = api_ia.importar(origem, self.config)
         os.environ["BAIXADOR_IA_API_KEY"] = api_ia.ler_chave(self.config)
@@ -99,7 +97,7 @@ class ServicosBase:
         return info
 
     def remover_chave(self) -> bool:
-        import api_ia
+        from baixador.web import api_ia
 
         removeu = api_ia.remover(self.config)
         if not self.preferencias.ia_api_key:
@@ -107,13 +105,13 @@ class ServicosBase:
         return removeu
 
     def testar_chave(self) -> tuple[bool, str]:
-        from identificacao_ia import IdentificadorIA
+        from baixador.web.identificacao_ia import IdentificadorIA
 
         return IdentificadorIA(self.config).testar_conexao()
 
     def testar_provedor(self, nome: str) -> tuple[bool, str]:
         """Teste de conexão com iTunes/MusicBrainz/Deezer (usado na tela)."""
-        from metadados import criar_processador_padrao
+        from baixador.midia.metadados import criar_processador_padrao
 
         processador = criar_processador_padrao()
         resultado = getattr(processador, "testar_provedor", None)
@@ -123,12 +121,12 @@ class ServicosBase:
 
     # -- dependências/versão ------------------------------------------------
     def versao_ytdlp(self) -> str:
-        from atualizacao import versao_instalada
+        from baixador.midia.atualizacao import versao_instalada
 
         return versao_instalada(self.config)
 
     def atualizar_ytdlp(self):
-        from atualizacao import atualizar
+        from baixador.midia.atualizacao import atualizar
 
         return atualizar(self.config)
 

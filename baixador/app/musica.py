@@ -10,14 +10,14 @@ import time
 from pathlib import Path
 from typing import Any
 
-from configuracoes import CONFIG, Configuracoes
-from downloader import Downloader, ErroDownload, Progresso
-from fila import FilaDownloads
-from historico import Historico
-from integracao import AdaptadorMetadados
-from organizacao import caminho_disponivel, subpasta
-from pesquisa import ErroPesquisa, Pesquisador
-from previa import Previa, pasta_para_tocar
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
+from baixador.web.downloader import Downloader, ErroDownload, Progresso
+from baixador.nucleo.fila import FilaDownloads
+from baixador.nucleo.historico import Historico
+from baixador.nucleo.integracao import AdaptadorMetadados
+from baixador.nucleo.organizacao import caminho_disponivel, subpasta
+from baixador.web.pesquisa import ErroPesquisa, Pesquisador
+from baixador.midia.previa import Previa, pasta_para_tocar
 
 
 class Aplicacao:
@@ -28,9 +28,7 @@ class Aplicacao:
         # injeção), nada é alterado — comportamento original preservado.
         if configuracoes is CONFIG:
             try:
-                from preferencias import (
-                    aplicar_ao_ambiente, carregar, derivar_configuracoes,
-                )
+                from baixador.nucleo.preferencias import aplicar_ao_ambiente, carregar, derivar_configuracoes
 
                 preferencias = carregar(CONFIG)
                 aplicar_ao_ambiente(preferencias)
@@ -92,7 +90,7 @@ class Aplicacao:
                         "inicio": resultado.iniciado_em,
                         "conclusao": resultado.finalizado_em,
                     }
-                    from contexto import ContextoMidia
+                    from baixador.nucleo.contexto import ContextoMidia
 
                     dados.update(ContextoMidia.normalizar(contexto).como_metadados())
                     caminho = self.metadados.processar_mp3(caminho, dados)
@@ -116,7 +114,7 @@ class Aplicacao:
                 print(f"[AVISO] {aviso}", file=sys.stderr)
             return True, aviso
         except (ErroDownload, FileNotFoundError, ValueError, OSError) as erro:
-            from diagnostico import classificar, sanitizar
+            from baixador.nucleo.diagnostico import classificar, sanitizar
 
             mensagem = str(erro)
             saida = getattr(erro, "saida", "")
@@ -136,7 +134,7 @@ class Aplicacao:
 
     def listar_playlist(self, url: str, limite: int = 200) -> Any:
         """Lista os itens de uma playlist/canal sem baixar mídia."""
-        from playlist import listar
+        from baixador.web.playlist import listar
 
         return listar(url, limite=limite, config=self.config)
 
@@ -349,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.comando == "gui":
-        from interface import main as _main_gui
+        from baixador.app.interface import main as _main_gui
 
         return _main_gui()
 

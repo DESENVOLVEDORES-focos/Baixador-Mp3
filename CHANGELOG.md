@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-11-18 — organização em pacote e correção dos caminhos de dados
+
+### Estrutura
+- A raiz tinha **36 arquivos `.py` soltos**. Agora só fica `main.py` (entrada) e
+  os `.bat`; todo o resto foi para o pacote `baixador/` em quatro áreas:
+  `nucleo/` (configuração, dados, regras), `midia/` (áudio, capas, player),
+  `web/` (pesquisa, download, IA) e `app/` (as duas interfaces e os serviços).
+- Imports absolutos (`from baixador.web import pesquisa`). Nada depende da pasta
+  atual; `iniciar.bat` continua chamando `main.py` com `%~dp0`.
+- Contratos preservados: `processar_mp3`, `BAIXADOR_METADATA_MODULE` (o valor
+  agora é `baixador.midia.modulo_metadados`) e todos os campos de
+  `Configuracoes`.
+
+### Correções
+- **Documentação errada**: os guias mandavam olhar `dados\app.log`,
+  `dados\player.json`; o programa grava em `.baixador\`. Corrigido em
+  `README.md`, `COMECE_AQUI.md`, `AUDITORIA.md` e `CHANGELOG.md`, com aviso de
+  que a pasta começa com ponto (é oculta no Explorer e no `dir` comum).
+- `README.md` ganhou a tabela completa de pastas (incluindo
+  `.baixador\biblioteca.db` e `.baixador\app.log`) e a seção **Estrutura do
+  projeto**.
+- CI passou a rodar `pyflakes` também nos pacotes
+  (`baixador/**/*.py`) e a testar os imports nos caminhos novos.
+
+### Verificação
+- `pytest`: **578 passed, 1 skipped, 94 subtests**; `pyflakes` limpo;
+  `compileall` limpo; `main.py --versao` = `Baixador-Mp3 6.0`;
+  `main.py --classica` delega para `baixador.app.interface`.
+
 ## 2026-11-17 (continuação) — tudo o que faltava, e o pacote de teste
 
 Rodada de revisão da especificação inteira. Cada item abaixo foi implementado,
@@ -11,7 +40,7 @@ testado e só então commitado.
 - **Atalhos**: Espaço (pausa, ignorado enquanto digita em campo de texto),
   Ctrl+←/→ ±10 s, Ctrl+↑/↓ volume, Ctrl+N/P faixa, Ctrl+L aleatório, Ctrl+R
   repetição.
-- **Estado persistido** em `dados/player.json`: volume, repetição, aleatório,
+- **Estado persistido** em `.baixador/player.json`: volume, repetição, aleatório,
   fila e última faixa — restaurado ao abrir e gravado ao fechar.
 
 ### Metadados e áudio
@@ -51,7 +80,7 @@ testado e só então commitado.
   altera o arquivo. Sem capa válida, avisa que nada foi gravado.
 
 ### Interface
-- **Painel de mensagens** na tela (com "Copiar tudo") e log em `dados/app.log`
+- **Painel de mensagens** na tela (com "Copiar tudo") e log em `.baixador/app.log`
   — o terminal deixou de ser necessário para ver erro.
 - Botão "Abrir pasta de dados"; **96 botões clicados automaticamente** num
   teste que falha se algum levantar exceção.

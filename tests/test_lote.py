@@ -12,9 +12,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from configuracoes import Configuracoes
-from downloader import Downloader, ErroDownload, ResultadoDownload
-from playlist import ItemPlaylist, Playlist
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.web.downloader import Downloader, ErroDownload, ResultadoDownload
+from baixador.web.playlist import ItemPlaylist, Playlist
 
 
 def _playlist(*itens: ItemPlaylist) -> Playlist:
@@ -44,8 +44,8 @@ class TestBaixarPlaylist(unittest.TestCase):
                 iniciado_em="", finalizado_em="", motivo="",
                 pulado=False)
 
-        with patch("downloader.listar", create=True, return_value=playlist), \
-                patch("playlist.listar", return_value=playlist), \
+        with patch("baixador.web.downloader.listar", create=True, return_value=playlist), \
+                patch("baixador.web.playlist.listar", return_value=playlist), \
                 patch.object(Downloader, "baixar", side_effect=falso_baixar):
             lista = self.baixador.baixar_playlist(
                 "https://www.youtube.com/playlist?list=X", "mp3")
@@ -92,7 +92,7 @@ class TestBaixarPlaylist(unittest.TestCase):
             ItemPlaylist(2, "b", "Dois", "https://youtu.be/bbbb"),
         )
         vistos: list[tuple[int, int, str]] = []
-        with patch("playlist.listar", return_value=alvo), \
+        with patch("baixador.web.playlist.listar", return_value=alvo), \
                 patch.object(Downloader, "baixar", side_effect=lambda *a, **k:
                              ResultadoDownload(url="u", formato="mp3",
                                                caminho=None, iniciado_em="",
@@ -108,7 +108,7 @@ class TestBaixarPlaylist(unittest.TestCase):
         def explode(_p, _t, _titulo):
             raise RuntimeError("interface fechou")
 
-        with patch("playlist.listar", return_value=alvo), \
+        with patch("baixador.web.playlist.listar", return_value=alvo), \
                 patch.object(Downloader, "baixar", side_effect=lambda *a, **k:
                              ResultadoDownload(url="u", formato="mp3",
                                                caminho=None, iniciado_em="",
@@ -118,7 +118,7 @@ class TestBaixarPlaylist(unittest.TestCase):
         self.assertEqual(len(resultados), 1)
 
     def test_url_invalida_falha_antes_de_listar(self):
-        with patch("playlist.listar") as listar:
+        with patch("baixador.web.playlist.listar") as listar:
             with self.assertRaises(Exception):
                 self.baixador.baixar_playlist("não é url", "mp3")
         listar.assert_not_called()
@@ -141,7 +141,7 @@ class TestBaixarVarios(unittest.TestCase):
                 return False, "vídeo privado"
             return True, "MP3 concluído"
 
-        from musica import Aplicacao
+        from baixador.app.musica import Aplicacao
         aplicacao = Aplicacao.__new__(Aplicacao)
         aplicacao.baixar = falso_baixar  # type: ignore[assignment]
         resumo = Aplicacao.baixar_varios(aplicacao, urls, "mp3")
@@ -159,7 +159,7 @@ class TestBaixarVarios(unittest.TestCase):
                 raise ErroDownload("falhou de propósito")
             return True, "ok"
 
-        from musica import Aplicacao
+        from baixador.app.musica import Aplicacao
         aplicacao = Aplicacao.__new__(Aplicacao)
         aplicacao.baixar = falso_baixar  # type: ignore[assignment]
         resumo = Aplicacao.baixar_varios(aplicacao, urls, "mp3")
@@ -168,7 +168,7 @@ class TestBaixarVarios(unittest.TestCase):
         self.assertIn("falhou de propósito", resumo[1][2])
 
     def test_avisa_cada_item(self):
-        from musica import Aplicacao
+        from baixador.app.musica import Aplicacao
         aplicacao = Aplicacao.__new__(Aplicacao)
         aplicacao.baixar = lambda url, formato, **k: (True, "ok")  # type: ignore
         avisos: list[tuple[int, int, str]] = []
@@ -180,7 +180,7 @@ class TestBaixarVarios(unittest.TestCase):
         self.assertEqual(len(resumo), 2)
 
     def test_lista_vazia_nao_quebra(self):
-        from musica import Aplicacao
+        from baixador.app.musica import Aplicacao
         aplicacao = Aplicacao.__new__(Aplicacao)
         self.assertEqual(Aplicacao.baixar_varios(aplicacao, [], "mp3"), [])
 

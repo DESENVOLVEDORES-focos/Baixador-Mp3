@@ -114,7 +114,7 @@ class TestNenhumBotaoMorto(unittest.TestCase):
 
     def test_botoes_do_player_nao_estouram_sem_audio(self):
         app = self.app
-        from reprodutor import Faixa
+        from baixador.midia.reprodutor import Faixa
 
         self.central.reprodutor.parar(silencioso=True)
         self.central.reprodutor.fila = []

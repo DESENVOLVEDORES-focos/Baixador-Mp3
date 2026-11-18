@@ -14,8 +14,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import pesquisa
-from configuracoes import Configuracoes
+from baixador.web import pesquisa
+from baixador.nucleo.configuracoes import Configuracoes
+from tests.test_central_app import esquecer_modulos
 
 
 def _saida(entries: list[dict]) -> str:
@@ -128,7 +129,7 @@ class TestTiposDoResultado(unittest.TestCase):
     def _pesquisar_saida(self, entries):
         concluido = type("P", (), {"returncode": 0, "stdout": _saida(entries),
                                    "stderr": ""})()
-        with patch("pesquisa.subprocess.run", return_value=concluido):
+        with patch("baixador.web.pesquisa.subprocess.run", return_value=concluido):
             return self.pesquisador._pesquisar_uma("rock", 10, "tudo")
 
     def test_playlist_da_busca_e_reconhecida(self):
@@ -289,10 +290,9 @@ class TestFiltrosDePesquisaNaTela(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from tests.test_central_app import _instalar_tk_falso
-        from configuracoes import Configuracoes
-        from preferencias import Preferencias
-        import sys
+        from tests.test_central_app import esquecer_modulos, _instalar_tk_falso
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.nucleo.preferencias import Preferencias
         import os
 
         cls._env = patch.dict(os.environ)
@@ -303,10 +303,10 @@ class TestFiltrosDePesquisaNaTela(unittest.TestCase):
         os.environ["BAIXADOR_DATA_DIR"] = str(raiz / ".baixador")
         (raiz / "Musicas").mkdir(exist_ok=True)
         (raiz / "ferramentas").mkdir(exist_ok=True)
-        for modulo in ("central_app", "central", "central_servicos"):
-            sys.modules.pop(modulo, None)
-        import central_app
-        from central import Central
+        esquecer_modulos("baixador.app.central_app", "baixador.app.central",
+                          "baixador.app.central_servicos")
+        from baixador.app import central_app
+        from baixador.app.central import Central
 
         cls.modulo = central_app
         cls.central = Central(
@@ -326,8 +326,8 @@ class TestFiltrosDePesquisaNaTela(unittest.TestCase):
         for modulo in list(sys.modules):
             if modulo.startswith("tkinter"):
                 sys.modules.pop(modulo, None)
-        for modulo in ("central_app", "central", "central_servicos"):
-            sys.modules.pop(modulo, None)
+        esquecer_modulos("baixador.app.central_app", "baixador.app.central",
+                          "baixador.app.central_servicos")
 
     @staticmethod
     def _resultados():

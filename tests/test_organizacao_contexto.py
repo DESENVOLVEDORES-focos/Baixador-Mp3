@@ -9,17 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from contexto import ContextoMidia
-from diagnostico import (
-    SITUACAO_COOKIES_VENCIDOS, SITUACAO_JA_EXISTE, SITUACAO_LOGIN,
-    SITUACAO_NAO_ENCONTRADO, SITUACAO_OUTRO, SITUACAO_PRIVADO, SITUACAO_REDE,
-    classificar, dica_para_interface, sanitizar,
-)
-from downloader import Downloader
-from organizacao import (
-    caminho_disponivel, limpar_componente, nome_arquivo, subpasta,
-    titulo_e_artista_do_arquivo,
-)
+from baixador.nucleo.contexto import ContextoMidia
+from baixador.nucleo.diagnostico import SITUACAO_COOKIES_VENCIDOS, SITUACAO_JA_EXISTE, SITUACAO_LOGIN, SITUACAO_NAO_ENCONTRADO, SITUACAO_OUTRO, SITUACAO_PRIVADO, SITUACAO_REDE, classificar, dica_para_interface, sanitizar
+from baixador.web.downloader import Downloader
+from baixador.nucleo.organizacao import caminho_disponivel, limpar_componente, nome_arquivo, subpasta, titulo_e_artista_do_arquivo
 
 
 class TestNomes(unittest.TestCase):
@@ -132,7 +125,7 @@ class TestPublicacaoComNomeOrganizado(unittest.TestCase):
             pasta = Path(argv[argv.index("--paths") + 1])
             (pasta / nome_ytdlp).write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 64)
 
-        with patch("downloader.subprocess.Popen", Processo([], 0, criar)):
+        with patch("baixador.web.downloader.subprocess.Popen", Processo([], 0, criar)):
             return downloader.baixar("https://example.org/v", "mp3",
                                      contexto=contexto), config
 
@@ -171,7 +164,7 @@ class TestPublicacaoComNomeOrganizado(unittest.TestCase):
             pasta = Path(argv[argv.index("--paths") + 1])
             (pasta / nome).write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 64)
 
-        with patch("downloader.subprocess.Popen", Processo([], 0, criar)):
+        with patch("baixador.web.downloader.subprocess.Popen", Processo([], 0, criar)):
             resultado = downloader.baixar("https://example.org/v", "mp3")
         self.assertEqual(resultado.caminho.name, nome)
 
@@ -192,7 +185,7 @@ class TestPublicacaoComNomeOrganizado(unittest.TestCase):
             pasta = Path(argv[argv.index("--paths") + 1])
             (pasta / nome).write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 64)
 
-        with patch("downloader.subprocess.Popen", Processo([], 0, criar)):
+        with patch("baixador.web.downloader.subprocess.Popen", Processo([], 0, criar)):
             resultado = downloader.baixar("https://example.org/v", "mp3")
         self.assertEqual(resultado.caminho.name, "Queen - Bohemian Rhapsody (2).mp3")
         self.assertEqual(existente.read_bytes(), b"original")
@@ -202,8 +195,8 @@ class TestOrganizacaoPorAlbum(unittest.TestCase):
     """Movimentação para Artista/Álbum só com dados confirmados."""
 
     def _app(self, resumo):  # noqa: ANN001
-        from configuracoes import Configuracoes
-        from musica import Aplicacao
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.app.musica import Aplicacao
 
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -258,7 +251,7 @@ class TestLimpezaDeNome(unittest.TestCase):
     """Casos encontrados em teste real com ffmpeg + yt-dlp."""
 
     def test_ruido_de_publicacao_sai_do_nome(self):
-        from downloader import Downloader
+        from baixador.web.downloader import Downloader
 
         d = Downloader.__new__(Downloader)
         nome = "Queen - Bohemian Rhapsody (Official Video) " \
@@ -267,7 +260,7 @@ class TestLimpezaDeNome(unittest.TestCase):
                          "Queen - Bohemian Rhapsody.mp3")
 
     def test_cauda_com_titulo_repetido_sai(self):
-        from downloader import Downloader
+        from baixador.web.downloader import Downloader
 
         d = Downloader.__new__(Downloader)
         nome = ("Queen - Bohemian Rhapsody (Official Video) "
@@ -276,7 +269,7 @@ class TestLimpezaDeNome(unittest.TestCase):
                          "Queen - Bohemian Rhapsody.mp3")
 
     def test_tags_de_versao_ficam(self):
-        from downloader import Downloader
+        from baixador.web.downloader import Downloader
 
         d = Downloader.__new__(Downloader)
         for entrada, esperado in (
@@ -286,7 +279,7 @@ class TestLimpezaDeNome(unittest.TestCase):
             self.assertEqual(d._nome_organizado(Path(entrada)), esperado)
 
     def test_contexto_com_canal_vevo_nao_duplica_artista(self):
-        from downloader import Downloader
+        from baixador.web.downloader import Downloader
 
         d = Downloader.__new__(Downloader)
         contexto = ContextoMidia(titulo="Bohemian Rhapsody (Official Video)",
@@ -299,8 +292,8 @@ class TestCookiesNaPasta(unittest.TestCase):
     """Quem baixa cookies.txt do navegador costuma deixá-lo na pasta do app."""
 
     def _status(self, montar):
-        from configuracoes import Configuracoes
-        from cookies_youtube import status
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.web.cookies_youtube import status
 
         dados = tempfile.TemporaryDirectory()
         self.addCleanup(dados.cleanup)
@@ -316,7 +309,7 @@ class TestCookiesNaPasta(unittest.TestCase):
         return config, status(config)
 
     def test_cookies_solto_na_pasta_do_programa_e_aceito(self):
-        from configuracoes import argumentos_cookies
+        from baixador.nucleo.configuracoes import argumentos_cookies
 
         def montar(raiz):
             (raiz / "cookies.txt").write_text(
@@ -339,7 +332,7 @@ class TestCookiesNaPasta(unittest.TestCase):
         self.assertIn("Formato incompatível", info.mensagem)
 
     def test_sem_cookies_nao_passa_a_flag(self):
-        from configuracoes import argumentos_cookies
+        from baixador.nucleo.configuracoes import argumentos_cookies
 
         config, info = self._status(lambda raiz: None)
         self.assertFalse(info.configurado)
@@ -361,20 +354,20 @@ class TestCookiesVencidos(unittest.TestCase):
         return "\n".join(linhas) + "\n"
 
     def test_conta_vencidos(self):
-        from cookies_youtube import contar_vencidos
+        from baixador.web.cookies_youtube import contar_vencidos
 
         texto = self._texto([-86400, -100, 86400])
         self.assertEqual(contar_vencidos(texto), (2, 2))
 
     def test_cookie_de_sessao_nao_conta_como_vencido(self):
-        from cookies_youtube import contar_vencidos
+        from baixador.web.cookies_youtube import contar_vencidos
 
         texto = ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tv\n"
         self.assertEqual(contar_vencidos(texto), (0, 0))
 
     def test_status_avisa_quando_tudo_venceu(self):
-        from configuracoes import Configuracoes
-        from cookies_youtube import status
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.web.cookies_youtube import status
 
         raiz = Path(tempfile.mkdtemp())
         self.addCleanup(__import__("shutil").rmtree, raiz, True)
@@ -391,8 +384,8 @@ class TestCookiesVencidos(unittest.TestCase):
         self.assertIn("venceram", info.mensagem)
 
     def test_status_sem_vencimento_diz_que_esta_pronto(self):
-        from configuracoes import Configuracoes
-        from cookies_youtube import status
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.web.cookies_youtube import status
 
         raiz = Path(tempfile.mkdtemp())
         self.addCleanup(__import__("shutil").rmtree, raiz, True)
@@ -412,8 +405,8 @@ class TestRelatoDaIdentificacao(unittest.TestCase):
     """O usuário precisa saber o que foi confirmado e o que faltou."""
 
     def _app(self, resumo):
-        from configuracoes import Configuracoes
-        from musica import Aplicacao
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.app.musica import Aplicacao
 
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -508,8 +501,8 @@ class TestDiagnostico(unittest.TestCase):
         self.assertIn("não funcionar mais", com)
 
     def test_historico_nunca_grava_token(self):
-        from configuracoes import Configuracoes
-        from historico import Historico
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.nucleo.historico import Historico
 
         with tempfile.TemporaryDirectory() as temp:
             config = Configuracoes(raiz=Path(temp))

@@ -16,12 +16,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import thumbs
-from configuracoes import Configuracoes
-from interface import (
-    ControladorInterface, _data_legivel, _parece_falta_de_login, _resumo_texto,
-)
-from preferencias import Preferencias, carregar
+from baixador.web import thumbs
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.app.interface import ControladorInterface, _data_legivel, _parece_falta_de_login, _resumo_texto
+from baixador.nucleo.preferencias import Preferencias, carregar
 
 def jpeg_valido() -> bytes:
     """JPEG real 2x2 gerado com Pillow (dependência de teste, não do app)."""
@@ -113,14 +111,14 @@ class TestControlador(AmbienteTemp):
             recebido.update(url=url, formato=formato, contexto=contexto,
                             tem_callback=callable(ao_progresso), politica=politica)
             if ao_progresso:
-                from downloader import Progresso
+                from baixador.web.downloader import Progresso
 
                 ao_progresso(Progresso(percentual=42.0))
             return True, "ok"
 
         controlador.aplicacao.downloader = SimpleNamespace(baixar=baixar_falso)  # type: ignore[assignment]
         eventos = []
-        from contexto import ContextoMidia
+        from baixador.nucleo.contexto import ContextoMidia
 
         ctx = ContextoMidia(titulo="Bohemian Rhapsody", canal="Queen")
         ok, _ = controlador.baixar("https://exemplo.test/x", "mp3",
@@ -147,7 +145,7 @@ class TestControlador(AmbienteTemp):
         self.assertEqual(controlador.config.sobrescrita, "pular")
 
     def test_preferencia_de_sobrescrita_persiste_e_valida(self):
-        from preferencias import salvar
+        from baixador.nucleo.preferencias import salvar
 
         controlador = self._controlador()
         novas = Preferencias(sobrescrita="renomear")
@@ -175,12 +173,12 @@ class TestMiniaturas(AmbienteTemp):
         def resposta_falsa(*_args, **_kwargs):
             yield SimpleNamespace(read=lambda n=None: dados)
 
-        with patch("thumbs.urllib.request.urlopen", resposta_falsa):
+        with patch("baixador.web.thumbs.urllib.request.urlopen", resposta_falsa):
             caminho = thumbs.obter("https://i.ytimg.com/vi/x/hq.jpg", self.config.dados)
         self.assertIsNotNone(caminho)
         self.assertTrue(Path(caminho).is_file())
         # Segunda chamada não vai à rede (cache).
-        with patch("thumbs.urllib.request.urlopen") as abrir2:
+        with patch("baixador.web.thumbs.urllib.request.urlopen") as abrir2:
             novo = thumbs.obter("https://i.ytimg.com/vi/x/hq.jpg", self.config.dados)
             abrir2.assert_not_called()
         self.assertEqual(Path(caminho), Path(novo))
@@ -192,11 +190,11 @@ class TestMiniaturas(AmbienteTemp):
         def resposta_falsa(*_args, **_kwargs):
             yield SimpleNamespace(read=lambda n=None: b"<html>nao e imagem</html>")
 
-        with patch("thumbs.urllib.request.urlopen", resposta_falsa):
+        with patch("baixador.web.thumbs.urllib.request.urlopen", resposta_falsa):
             self.assertIsNone(thumbs.obter("https://x/y.jpg", self.config.dados))
 
     def test_falha_de_rede_nao_derruba_nada(self):
-        with patch("thumbs.urllib.request.urlopen", side_effect=OSError("sem rede")):
+        with patch("baixador.web.thumbs.urllib.request.urlopen", side_effect=OSError("sem rede")):
             self.assertIsNone(thumbs.obter("https://x/y.jpg", self.config.dados))
 
     def test_url_insegura_e_ignorada(self):

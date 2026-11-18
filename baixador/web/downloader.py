@@ -31,11 +31,8 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 from urllib.parse import urlsplit
 
-from configuracoes import CONFIG, Configuracoes, argumentos_cookies
-from organizacao import (
-    caminho_disponivel, limpar_componente, nome_arquivo,
-    titulo_e_artista_do_arquivo,
-)
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes, argumentos_cookies
+from baixador.nucleo.organizacao import caminho_disponivel, limpar_componente, nome_arquivo, titulo_e_artista_do_arquivo
 
 Formato = Literal["mp3", "mp4"]
 
@@ -382,7 +379,7 @@ class Downloader:
         passa pelo mesmo caminho de um download avulso: pasta de trabalho,
         política de sobrescrita, nome organizado e publicação.
         """
-        from playlist import listar
+        from baixador.web.playlist import listar
 
         url = validar_url(url)
         self.config.preparar_diretorios()
@@ -456,14 +453,14 @@ class Downloader:
         artista_contexto = ""
         if contexto is not None:
             try:
-                from contexto import ContextoMidia
+                from baixador.nucleo.contexto import ContextoMidia
 
                 dados = ContextoMidia.normalizar(contexto)
                 titulo_contexto = dados.titulo
                 artista_contexto = dados.canal
             except Exception:  # contexto estranho nunca impede a publicação
                 titulo_contexto = artista_contexto = ""
-        from inteligencia import limpar_nome_canal, limpar_titulo_video
+        from baixador.web.inteligencia import limpar_nome_canal, limpar_titulo_video
 
         # Regra de precedência do nome apresentável:
         # 1. O nome do arquivo do yt-dlp (``Título [id]``), que já é o título

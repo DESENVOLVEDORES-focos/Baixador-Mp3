@@ -16,11 +16,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from central import Central
-from configuracoes import Configuracoes
-from metadados import ConfigMetadados
-from preferencias import Preferencias
-from selecao import ItemSelecao
+from baixador.app.central import Central
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.midia.metadados import ConfigMetadados
+from baixador.nucleo.preferencias import Preferencias
+from baixador.nucleo.selecao import ItemSelecao
 
 
 def _ffmpeg() -> str | None:
@@ -166,7 +166,7 @@ class TestCentral(unittest.TestCase):
 
         from unittest.mock import patch as _patch
 
-        with _patch("colecoes.criar_processador_padrao",
+        with _patch("baixador.midia.colecoes.criar_processador_padrao",
                     return_value=ProcessadorFalso()):
             resultados = self.central.completar_metadados([musica])
         self.assertEqual(len(resultados), 1)
@@ -266,7 +266,7 @@ class TestCentral(unittest.TestCase):
 
     # -- o que a tela mostra ----------------------------------------------
     def test_rotulos_dos_estados_existem(self):
-        from gerenciador import ESTADOS, ROTULO_ESTADO
+        from baixador.nucleo.gerenciador import ESTADOS, ROTULO_ESTADO
 
         self.assertEqual(set(ROTULO_ESTADO), set(ESTADOS))
 
@@ -318,7 +318,7 @@ class TestPosProcessamento(unittest.TestCase):
         return destino
 
     def test_normalizacao_muda_o_arquivo_e_mantem_audio(self):
-        from audio import duracao, normalizar
+        from baixador.midia.audio import duracao, normalizar
 
         arquivo = self._mp3("norm.mp3")
         antes = arquivo.stat().st_size
@@ -330,7 +330,7 @@ class TestPosProcessamento(unittest.TestCase):
                                delta=0.5)
 
     def test_verificacao_recusa_arquivo_truncado(self):
-        from audio import verificar
+        from baixador.midia.audio import verificar
 
         arquivo = self._mp3("curto.mp3", segundos=1)
         resultado = verificar(arquivo, ffmpeg=_ffmpeg())
@@ -340,7 +340,7 @@ class TestPosProcessamento(unittest.TestCase):
         self.assertTrue(verificar(bom, ffmpeg=_ffmpeg()).ok)
 
     def test_arquivo_corrompido_e_recusado(self):
-        from audio import verificar
+        from baixador.midia.audio import verificar
 
         ruim = self.config.musicas / "ruim.mp3"
         ruim.write_bytes(b"\x00" * 8192)
@@ -348,7 +348,7 @@ class TestPosProcessamento(unittest.TestCase):
         self.assertFalse(resultado.ok)
 
     def test_arquivo_inexistente_nao_quebra(self):
-        from audio import duracao, normalizar, verificar
+        from baixador.midia.audio import duracao, normalizar, verificar
 
         inexistente = self.raiz / "nada.mp3"
         self.assertIsNone(duracao(inexistente))
@@ -372,7 +372,7 @@ class TestPosProcessamento(unittest.TestCase):
     def test_central_pos_processa_ao_concluir(self):
         from unittest.mock import patch as _patch
 
-        from gerenciador import ItemDownload
+        from baixador.nucleo.gerenciador import ItemDownload
 
         central = Central(self.config, Preferencias(
             metadados_ativos=False, buscar_capas=False,
@@ -385,12 +385,12 @@ class TestPosProcessamento(unittest.TestCase):
         chamadas = []
         falso = self._com_ffmpeg_do_sandbox()
         central.config = falso  # só ``caminho_ffmpeg`` é consultado aqui
-        with _patch("audio.normalizar",
+        with _patch("baixador.midia.audio.normalizar",
                     side_effect=lambda *a, **k: chamadas.append("normalizar")
-                    or __import__("audio").ResultadoAudio(arquivo, True, "ok")), \
-                _patch("audio.verificar",
+                    or __import__("baixador.midia.audio", fromlist=["*"]).ResultadoAudio(arquivo, True, "ok")), \
+                _patch("baixador.midia.audio.verificar",
                        side_effect=lambda *a, **k: chamadas.append("verificar")
-                       or __import__("audio").ResultadoAudio(arquivo, True,
+                       or __import__("baixador.midia.audio", fromlist=["*"]).ResultadoAudio(arquivo, True,
                                                             "verificado")):
             central._pos_processar(item)
             central.biblioteca.adicionar(arquivo, origem_url=item.url)
@@ -402,7 +402,7 @@ class TestPosProcessamento(unittest.TestCase):
         """A preferência ligada faz a Central medir e gravar o ReplayGain."""
         from unittest.mock import patch as _patch
 
-        from gerenciador import ItemDownload
+        from baixador.nucleo.gerenciador import ItemDownload
 
         central = Central(self.config, Preferencias(
             metadados_ativos=False, buscar_capas=False,
@@ -420,7 +420,7 @@ class TestPosProcessamento(unittest.TestCase):
             medidos.append(caminho)
             return True, "ReplayGain gravado: +1.00 dB"
 
-        with _patch("audio.aplicar_replaygain", side_effect=_falso):
+        with _patch("baixador.midia.audio.aplicar_replaygain", side_effect=_falso):
             central._pos_processar(item)
         self.assertEqual(len(medidos), 1)
         self.assertIn("ReplayGain", item.mensagem)
@@ -428,7 +428,7 @@ class TestPosProcessamento(unittest.TestCase):
     def test_central_nao_grava_replaygain_desligado(self):
         from unittest.mock import patch as _patch
 
-        from gerenciador import ItemDownload
+        from baixador.nucleo.gerenciador import ItemDownload
 
         central = Central(self.config, Preferencias(
             metadados_ativos=False, buscar_capas=False,
@@ -440,7 +440,7 @@ class TestPosProcessamento(unittest.TestCase):
         falso = self._com_ffmpeg_do_sandbox()
         falso.replaygain = False
         central.config = falso
-        with _patch("audio.aplicar_replaygain") as aplicar:
+        with _patch("baixador.midia.audio.aplicar_replaygain") as aplicar:
             central._pos_processar(item)
         aplicar.assert_not_called()
 

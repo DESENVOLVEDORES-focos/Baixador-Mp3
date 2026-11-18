@@ -28,7 +28,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from configuracoes import CONFIG, Configuracoes
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
 
 log = logging.getLogger("baixador.api")
 

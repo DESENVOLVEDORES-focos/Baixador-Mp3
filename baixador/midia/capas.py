@@ -25,10 +25,7 @@ import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
-from inteligencia import (
-    ClienteHTTPUrllib, ConsultaMusica, ErroAPI, InfoMusica,
-    ProvedorDeezer,
-)
+from baixador.web.inteligencia import ClienteHTTPUrllib, ConsultaMusica, ErroAPI, InfoMusica, ProvedorDeezer
 
 log = logging.getLogger("baixador.ia2.capas")
 

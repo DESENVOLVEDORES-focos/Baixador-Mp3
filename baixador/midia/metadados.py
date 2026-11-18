@@ -2,8 +2,8 @@
 
 Ponto de entrada do contrato (ver ``INTEGRATION.md``)::
 
-    BAIXADOR_METADATA_MODULE=modulo_metadados python musica.py download <url> --formato mp3
-    # ou: BAIXADOR_METADATA_MODULE=metadados
+    BAIXADOR_METADATA_MODULE=baixador.midia.modulo_metadados python musica.py download <url> --formato mp3
+    # ou: BAIXADOR_METADATA_MODULE=baixador.midia.metadados
 
 Fluxo de ``processar_mp3(caminho, metadados)``:
 
@@ -28,11 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from capas import GerenciadorCapas, validar_imagem
-from inteligencia import (
-    ClienteHTTPUrllib, IdentificadorMusical, InfoMusica, analisar_titulo,
-    criar_assistente_padrao, limpar_nome_canal,
-)
+from baixador.midia.capas import GerenciadorCapas, validar_imagem
+from baixador.web.inteligencia import ClienteHTTPUrllib, IdentificadorMusical, InfoMusica, analisar_titulo, criar_assistente_padrao, limpar_nome_canal
 
 log = logging.getLogger("baixador.ia2.metadados")
 
@@ -244,7 +241,7 @@ class ProcessadorMusical:
         """Configuração do núcleo (para achar ``api.txt``), com padrão seguro."""
         if self._config_nucleo is not None:
             return self._config_nucleo
-        from configuracoes import CONFIG
+        from baixador.nucleo.configuracoes import CONFIG
 
         return CONFIG
 
@@ -280,7 +277,7 @@ class ProcessadorMusical:
         dados_ia = None
         if self.config.usar_ia:
             try:
-                from identificacao_ia import criar_identificador
+                from baixador.web.identificacao_ia import criar_identificador
 
                 identificador_ia = criar_identificador(self.config_objeto())
                 if identificador_ia is not None:
@@ -301,7 +298,7 @@ class ProcessadorMusical:
                         confianca=0.0)
                     campos_da_ia = [campo for campo in
                                     ("titulo", "artista") if getattr(dados_ia, campo)]
-                from identificacao_ia import aplicar_na_info
+                from baixador.web.identificacao_ia import aplicar_na_info
 
                 campos_da_ia.extend(aplicar_na_info(info, dados_ia))
                 campos_da_ia = sorted(set(campos_da_ia))

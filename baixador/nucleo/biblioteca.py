@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-from configuracoes import CONFIG, Configuracoes
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
 
 log = logging.getLogger("baixador.biblioteca")
 
@@ -185,7 +185,7 @@ def ler_tags(caminho: Path) -> dict[str, Any]:
     caminho = Path(caminho)
     dados: dict[str, Any] = {}
     try:
-        from metadados import ler_metadados
+        from baixador.midia.metadados import ler_metadados
 
         dados.update(ler_metadados(caminho))
     except Exception as erro:  # arquivo corrompido não derruba a indexação

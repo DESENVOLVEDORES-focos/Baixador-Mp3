@@ -15,11 +15,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from downloader import (
-    ETAPA_BAIXANDO, ETAPA_CONVERTENDO, ETAPA_MESCLANDO, ETAPA_METADADOS,
-    ErroDownload, Downloader, _resumir_erro, interpretar_linha,
-)
-from pesquisa import _converter_item
+from baixador.web.downloader import ETAPA_BAIXANDO, ETAPA_CONVERTENDO, ETAPA_MESCLANDO, ETAPA_METADADOS, ErroDownload, Downloader, _resumir_erro, interpretar_linha
+from baixador.web.pesquisa import _converter_item
 
 # Saídas reais do yt-dlp (--newline) usadas como fixture.
 SAIDA_FALHA_404 = (
@@ -128,7 +125,7 @@ class TestResumoDeErro(Base):
 
     def test_falha_de_download_vira_erro_tratado_e_nao_traceback(self):
         downloader = Downloader(self.config)  # type: ignore[arg-type]
-        with patch("downloader.subprocess.Popen",
+        with patch("baixador.web.downloader.subprocess.Popen",
                    PopenDuplo(SAIDA_FALHA_404, 1)):
             with self.assertRaises(ErroDownload) as contexto:
                 downloader.baixar("https://example.org/naoexiste", "mp3")
@@ -139,12 +136,12 @@ class TestResumoDeErro(Base):
         self.assertIn("Downloading webpage", erro.saida)
 
     def test_erro_vai_para_o_historico_como_erro_e_nao_derruba_o_app(self):
-        from historico import Historico
-        from musica import Aplicacao
+        from baixador.nucleo.historico import Historico
+        from baixador.app.musica import Aplicacao
 
         app = Aplicacao(self.config)  # type: ignore[arg-type]
         app.downloader = Downloader(self.config)  # type: ignore[arg-type]
-        with patch("downloader.subprocess.Popen",
+        with patch("baixador.web.downloader.subprocess.Popen",
                    PopenDuplo(SAIDA_FALHA_404, 1)):
             sucesso, mensagem = app.baixar("https://example.org/x", "mp3")
         self.assertFalse(sucesso)
@@ -206,7 +203,7 @@ class TestProgresso(Base):
             return ProcessoFalso(SAIDA_PROGRESSO + f"{arquivo}\n", 0)
 
         downloader = Downloader(self.config)  # type: ignore[arg-type]
-        with patch("downloader.subprocess.Popen", fake_popen):
+        with patch("baixador.web.downloader.subprocess.Popen", fake_popen):
             resultado = downloader.baixar(
                 "https://example.org/v", "mp3", ao_progresso=eventos.append)
         self.assertFalse(resultado.pulado)
@@ -236,7 +233,7 @@ class TestProgresso(Base):
             raise RuntimeError("interface quebrou")
 
         downloader = Downloader(self.config)  # type: ignore[arg-type]
-        with patch("downloader.subprocess.Popen", fake_popen):
+        with patch("baixador.web.downloader.subprocess.Popen", fake_popen):
             resultado = downloader.baixar(
                 "https://example.org/v", "mp3", ao_progresso=callback_ruim)
         self.assertEqual(resultado.caminho.name, "faixa [x].mp3")
@@ -265,7 +262,7 @@ class TestPoliticaDeSobrescrita(Base):
             criados.append(alvo)
             return ProcessoFalso(f"{alvo}\n", 0)
 
-        with patch("downloader.subprocess.Popen", fake_popen):
+        with patch("baixador.web.downloader.subprocess.Popen", fake_popen):
             resultado = downloader.baixar("https://example.org/a", "mp3")
         return resultado, existente, criados
 
@@ -293,15 +290,15 @@ class TestPoliticaDeSobrescrita(Base):
                       downloader.construir_argumentos("https://e.org/a", "mp3"))
 
     def test_pular_aparece_no_historico_como_pulado(self):
-        from historico import Historico
-        from musica import Aplicacao
+        from baixador.nucleo.historico import Historico
+        from baixador.app.musica import Aplicacao
 
         self.config.sobrescrita = "pular"
         (self.config.musicas / "faixa [abc].mp3").write_bytes(b"original")
         app = Aplicacao(self.config)  # type: ignore[arg-type]
         app.downloader = Downloader(self.config)  # type: ignore[arg-type]
         consulta = ProcessoFalso("faixa [abc]\n", 0)
-        with patch("downloader.subprocess.Popen", consulta):
+        with patch("baixador.web.downloader.subprocess.Popen", consulta):
             sucesso, mensagem = app.baixar("https://example.org/a", "mp3")
         self.assertTrue(sucesso)
         self.assertIn("já existe", mensagem)
@@ -319,7 +316,7 @@ class TestArquivoDestaExecucao(Base):
         os.utime(antigo, (antes, antes))
 
         downloader = Downloader(self.config)  # type: ignore[arg-type]
-        with patch("downloader.subprocess.Popen", ProcessoFalso(f"{antigo}\n", 0)):
+        with patch("baixador.web.downloader.subprocess.Popen", ProcessoFalso(f"{antigo}\n", 0)):
             with self.assertRaises(ErroDownload):
                 downloader.baixar("https://example.org/a", "mp3")
 
@@ -335,7 +332,7 @@ class TestArquivoDestaExecucao(Base):
             return ProcessoFalso(f"{final}\n", 0)
 
         downloader = Downloader(self.config)  # type: ignore[arg-type]
-        with patch("downloader.subprocess.Popen", fake_popen):
+        with patch("baixador.web.downloader.subprocess.Popen", fake_popen):
             resultado = downloader.baixar("https://example.org/a", "mp3")
         self.assertEqual(resultado.caminho.name, "faixa [abc].mp3")
         # Só o MP3 final na pasta de músicas: nenhum .m4a/.part/resíduo.
@@ -355,7 +352,7 @@ class TestArquivoDestaExecucao(Base):
             return ProcessoFalso(f"{final}\n", 0)
 
         downloader = Downloader(self.config)  # type: ignore[arg-type]
-        with patch("downloader.subprocess.Popen", fake_popen):
+        with patch("baixador.web.downloader.subprocess.Popen", fake_popen):
             downloader.baixar("https://example.org/a", "mp3")
         self.assertTrue(outro.is_file())
 

@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from configuracoes import CONFIG, Configuracoes
-from diagnostico import sanitizar
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
+from baixador.nucleo.diagnostico import sanitizar
 
 
 class Historico:

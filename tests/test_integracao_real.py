@@ -23,10 +23,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from biblioteca import Biblioteca
-from central import Central
-from configuracoes import Configuracoes
-from preferencias import Preferencias
+from baixador.nucleo.biblioteca import Biblioteca
+from baixador.app.central import Central
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.nucleo.preferencias import Preferencias
 
 
 def _ffmpeg() -> str | None:
@@ -78,10 +78,10 @@ class TestFluxoCompleto(unittest.TestCase):
 
     # -- o fluxo ------------------------------------------------------------
     def test_mp3_entra_na_biblioteca_com_metadados_e_duracao(self):
-        from audio import duracao, verificar
-        from metadados import aplicar_metadados, ler_metadados
-        from organizacao import nome_arquivo
-        from inteligencia import InfoMusica
+        from baixador.midia.audio import duracao, verificar
+        from baixador.midia.metadados import aplicar_metadados, ler_metadados
+        from baixador.nucleo.organizacao import nome_arquivo
+        from baixador.web.inteligencia import InfoMusica
 
         arquivo = self._mp3("entrada.mp3")
         self.assertTrue(verificar(arquivo, ffmpeg=_ffmpeg()).ok)
@@ -119,7 +119,7 @@ class TestFluxoCompleto(unittest.TestCase):
                                 "genero": genero, "ano": ano})
         self.assertEqual(self.central.biblioteca.contar(), 3)
         self.assertEqual(len(self.central.biblioteca.listar(texto="legião")), 1)
-        from biblioteca import chave_busca
+        from baixador.nucleo.biblioteca import chave_busca
 
         # filtro de gênero é por conteúdo: "Rock" traz "Rock" e "Hard Rock"
         self.assertEqual(
@@ -132,8 +132,8 @@ class TestFluxoCompleto(unittest.TestCase):
         self.assertTrue({"1986", "1987", "1963"} <= anos)
 
     def test_cesta_playlist_e_fila_falam_a_mesma_lingua(self):
-        from gerenciador import ItemDownload
-        from selecao import ItemSelecao
+        from baixador.nucleo.gerenciador import ItemDownload
+        from baixador.nucleo.selecao import ItemSelecao
 
         arquivo = self._mp3("faixa.mp3")
         musica = self.central.biblioteca.adicionar(
@@ -162,7 +162,7 @@ class TestFluxoCompleto(unittest.TestCase):
         self.assertEqual(self.central.resumo_downloads()["total"], 1)
 
     def test_reprodutor_toca_a_fila_da_biblioteca_e_guarda_estado(self):
-        from reprodutor import Faixa
+        from baixador.midia.reprodutor import Faixa
 
         arquivos = [self._mp3(f"f{i}.mp3") for i in range(3)]
         fila_do_banco = [self.central.biblioteca.adicionar(
@@ -183,8 +183,8 @@ class TestFluxoCompleto(unittest.TestCase):
         self.assertEqual(len(outra.reprodutor.fila), 3)
 
     def test_limites_atuam_na_pesquisa_e_na_playlist(self):
-        from limites import avaliar
-        from preferencias import Preferencias
+        from baixador.nucleo.limites import avaliar
+        from baixador.nucleo.preferencias import Preferencias
 
         prefs = Preferencias(duracao_maxima_min=10, filtrar_ao_vivo=True)
         comum = avaliar("Música", "Canal", 240,
@@ -204,7 +204,7 @@ class TestFluxoCompleto(unittest.TestCase):
 
     def test_persistencia_de_ponta_a_ponta(self):
         """Tudo que o usuário fez continua lá depois de fechar o programa."""
-        from selecao import ItemSelecao
+        from baixador.nucleo.selecao import ItemSelecao
 
         arquivo = self._mp3("persistente.mp3")
         musica = self.central.biblioteca.adicionar(
@@ -250,9 +250,9 @@ class TestComunicacaoEntreServicos(unittest.TestCase):
 
     def test_modulo_de_metadados_e_o_contrato_da_ia1(self):
         """O contrato (`BAIXADOR_METADATA_MODULE`) aponta para função real."""
-        import modulo_metadados
+        from baixador.midia import modulo_metadados
 
-        import metadados
+        from baixador.midia import metadados
 
         self.assertTrue(callable(getattr(modulo_metadados, "processar_mp3", None)))
         # a fachada aponta para a implementação real (sem cópia divergente)

@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from configuracoes import CONFIG, Configuracoes, argumentos_cookies
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes, argumentos_cookies
 
 # Limites do trecho de prévia: curto o bastante para ser rápido e barato,
 # longo o bastante para reconhecer a música e perceber público/ao vivo.

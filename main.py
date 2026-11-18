@@ -86,10 +86,10 @@ def main(argumentos: list[str] | None = None) -> int:
         return 1
     try:
         if escolha.modo == "classica":
-            import interface
+            from baixador.app import interface
 
             return interface.main()
-        import central_app
+        from baixador.app import central_app
 
         central_app.iniciar()
         return 0

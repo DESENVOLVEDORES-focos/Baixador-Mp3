@@ -9,16 +9,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import api_ia
-import identificacao_ia
-from api_ia import ErroChave, extrair_chave, mascarar
-from configuracoes import Configuracoes
-from identificacao_ia import (
-    GENEROS_REFERENCIA, Identificacao, IdentificadorIA, aplicar_na_info,
-    ESQUEMA_RESPOSTA, interpretar_resposta, montar_prompt,
-    normalizar_genero, validar_resposta,
-)
-from inteligencia import ErroAPI, InfoMusica
+from baixador.web import api_ia
+from baixador.web import identificacao_ia
+from baixador.web.api_ia import ErroChave, extrair_chave, mascarar
+from baixador.nucleo.configuracoes import Configuracoes
+from baixador.web.identificacao_ia import GENEROS_REFERENCIA, Identificacao, IdentificadorIA, aplicar_na_info, ESQUEMA_RESPOSTA, interpretar_resposta, montar_prompt, normalizar_genero, validar_resposta
+from baixador.web.inteligencia import ErroAPI, InfoMusica
 
 
 class TestImportacaoDaChave(unittest.TestCase):
@@ -314,7 +310,7 @@ class TestIntegracaoNoProcessamento(unittest.TestCase):
         os.environ["BAIXADOR_IA_API_KEY"] = "sk-teste-1234567890abcdef"
 
     def _processador(self, identificacao):
-        from metadados import ConfigMetadados
+        from baixador.midia.metadados import ConfigMetadados
 
         class Identificador:
             ultimos_erros: list[str] = []
@@ -326,7 +322,7 @@ class TestIntegracaoNoProcessamento(unittest.TestCase):
             def buscar_e_baixar(self, *_a, **_k):
                 return None
 
-        from metadados import ProcessadorMusical
+        from baixador.midia.metadados import ProcessadorMusical
 
         processador = ProcessadorMusical(
             identificador=Identificador(), gerenciador_capas=Gerenciador(),
@@ -345,7 +341,7 @@ class TestIntegracaoNoProcessamento(unittest.TestCase):
         return processador
 
     def test_ia_preenche_tags_do_mp3_real(self):
-        from metadados import ler_metadados
+        from baixador.midia.metadados import ler_metadados
         try:
             import mutagen  # noqa: F401
         except ImportError:  # pragma: no cover

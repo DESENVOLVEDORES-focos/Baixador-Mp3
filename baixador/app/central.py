@@ -22,19 +22,17 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from biblioteca import Biblioteca, Musica
-from capas import CandidatoCapa, GerenciadorCapas
-from central_servicos import ServicosBase
-from colecoes import (
-    ResultadoCobertura, completar_metadados, incorporar_capa, incorporar_capas,
-)
-from fila import FilaDownloads
-from gerenciador import GerenciadorDownloads, ItemDownload
-from metadados import InfoMusica, aplicar_metadados
-from playlist import Playlist, listar as listar_playlist
-from preferencias import Preferencias, salvar
-from reprodutor import Faixa, Reprodutor
-from selecao import ItemSelecao, Selecao
+from baixador.nucleo.biblioteca import Biblioteca, Musica
+from baixador.midia.capas import CandidatoCapa, GerenciadorCapas
+from baixador.app.central_servicos import ServicosBase
+from baixador.midia.colecoes import ResultadoCobertura, completar_metadados, incorporar_capa, incorporar_capas
+from baixador.nucleo.fila import FilaDownloads
+from baixador.nucleo.gerenciador import GerenciadorDownloads, ItemDownload
+from baixador.midia.metadados import InfoMusica, aplicar_metadados
+from baixador.web.playlist import Playlist, listar as listar_playlist
+from baixador.nucleo.preferencias import Preferencias, salvar
+from baixador.midia.reprodutor import Faixa, Reprodutor
+from baixador.nucleo.selecao import ItemSelecao, Selecao
 
 log = logging.getLogger("baixador.central")
 
@@ -69,7 +67,7 @@ class Central(ServicosBase):
         except Exception as erro:  # fila ilegível nunca impede abrir o app
             log.info("Fila anterior não pôde ser lida: %s", erro)
             self.fila_recuperada = {}
-        from atualizacao import localizar_ffplay as _localizar
+        from baixador.midia.atualizacao import localizar_ffplay as _localizar
 
         # Guardado para a tela de configurações dizer a verdade sobre o áudio.
         self.ffplay = _localizar(self.config)
@@ -111,7 +109,7 @@ class Central(ServicosBase):
 
     def _pos_processar(self, item: ItemDownload) -> None:
         """Verifica o MP3 e aplica a normalização de volume, se configurada."""
-        from audio import normalizar, verificar
+        from baixador.midia.audio import normalizar, verificar
 
         caminho = Path(item.caminho)
         try:
@@ -133,7 +131,7 @@ class Central(ServicosBase):
             item.mensagem = f"{item.mensagem} {resultado.mensagem}".strip()
         if getattr(self.config, "replaygain", False):
             # Mede o volume com ebur128 e grava a tag (não altera o áudio).
-            from audio import aplicar_replaygain
+            from baixador.midia.audio import aplicar_replaygain
 
             try:
                 ok, mensagem = aplicar_replaygain(caminho, ffmpeg=ffmpeg)
@@ -174,7 +172,7 @@ class Central(ServicosBase):
     # -- regras de seleção (teto de duração / ao vivo) ----------------------
     def avaliar_itens(self, itens: Iterable[Any]) -> list[tuple[Any, Any]]:
         """Aplica o teto de duração e o filtro de ao vivo a uma lista de itens."""
-        from limites import filtrar
+        from baixador.nucleo.limites import filtrar
 
         return filtrar(
             itens,
@@ -186,7 +184,7 @@ class Central(ServicosBase):
     def listar_mais_playlist(self, playlist: Playlist,
                              quantidade: int = 200) -> Playlist:
         """Próxima janela de uma playlist/canal longo (botão "Listar mais")."""
-        from playlist import listar_mais
+        from baixador.web.playlist import listar_mais
 
         return listar_mais(playlist, quantidade, config=self.config)
 
@@ -411,7 +409,7 @@ class Central(ServicosBase):
     def capa_candidatos(self, musica: Musica,
                         limite: int = 4) -> list[Any]:
         """Capas encontradas para a música, **sem gravar nada** (prévia)."""
-        from capas import GerenciadorCapas, baixar_candidatos
+        from baixador.midia.capas import GerenciadorCapas, baixar_candidatos
 
         if not musica.artista and not musica.album:
             return []

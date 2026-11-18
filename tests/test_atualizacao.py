@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import atualizacao
-from configuracoes import Configuracoes
+from baixador.midia import atualizacao
+from baixador.nucleo.configuracoes import Configuracoes
 
 
 class _Processo:
@@ -27,17 +27,17 @@ class TestVersao(unittest.TestCase):
         self.config = Configuracoes(raiz=self.raiz)
 
     def test_le_a_primeira_linha_do_version(self):
-        with patch("atualizacao.subprocess.run",
+        with patch("baixador.midia.atualizacao.subprocess.run",
                    return_value=_Processo(stdout="2026.10.31\n")):
             self.assertEqual(atualizacao.versao_instalada(self.config), "2026.10.31")
 
     def test_falha_devolve_string_vazia(self):
-        with patch("atualizacao.subprocess.run",
+        with patch("baixador.midia.atualizacao.subprocess.run",
                    return_value=_Processo(returncode=2, stderr="erro")):
             self.assertEqual(atualizacao.versao_instalada(self.config), "")
 
     def test_timeout_nao_quebra(self):
-        with patch("atualizacao.subprocess.run",
+        with patch("baixador.midia.atualizacao.subprocess.run",
                    side_effect=atualizacao.subprocess.TimeoutExpired("x", 1)):
             self.assertEqual(atualizacao.versao_instalada(self.config), "")
 
@@ -58,7 +58,7 @@ class TestAtualizar(unittest.TestCase):
                 return _Processo(stdout=next(sequencia, ""))
             return pip or _Processo()
 
-        with patch("atualizacao.subprocess.run", side_effect=falso_run):
+        with patch("baixador.midia.atualizacao.subprocess.run", side_effect=falso_run):
             return atualizacao.atualizar(self.config)
 
     def test_atualiza_e_confirma_a_versao_nova(self):
@@ -103,7 +103,7 @@ class TestAtualizar(unittest.TestCase):
                 return _Processo(stdout="2024.01.01")
             return _Processo()
 
-        with patch("atualizacao.subprocess.run", side_effect=falso_run):
+        with patch("baixador.midia.atualizacao.subprocess.run", side_effect=falso_run):
             atualizacao.atualizar(self.config)
         pip = [c for c, _k in chamadas if "-m" in c and "pip" in c][0]
         self.assertIn("--upgrade", pip)

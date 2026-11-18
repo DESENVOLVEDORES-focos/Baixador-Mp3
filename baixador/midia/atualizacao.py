@@ -21,8 +21,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
-from configuracoes import CONFIG, Configuracoes
-from reprodutor import localizar_ffplay  # reexportado: a tela consulta aqui
+from baixador.nucleo.configuracoes import CONFIG, Configuracoes
+from baixador.midia.reprodutor import localizar_ffplay
 
 log = logging.getLogger("baixador.atualizacao")
 

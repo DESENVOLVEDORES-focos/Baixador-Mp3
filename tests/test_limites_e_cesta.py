@@ -13,8 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from limites import avaliar, estimar, filtrar, tamanho_legivel, tempo_legivel
-from selecao import ItemSelecao, Selecao
+from baixador.nucleo.limites import avaliar, estimar, filtrar, tamanho_legivel, tempo_legivel
+from baixador.nucleo.selecao import ItemSelecao, Selecao
 
 
 class TestAvaliacao(unittest.TestCase):
@@ -84,7 +84,7 @@ class TestCestaAvancada(unittest.TestCase):
     def setUp(self):
         self.raiz = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.raiz, True)
-        from configuracoes import Configuracoes
+        from baixador.nucleo.configuracoes import Configuracoes
 
         self.config = Configuracoes(raiz=self.raiz)
         self.selecao = Selecao(self.config)
@@ -154,9 +154,9 @@ class TestRegraNaFachada(unittest.TestCase):
         self._ambiente = patch.dict(os.environ)
         self._ambiente.start()
         self.addCleanup(self._ambiente.stop)
-        from central import Central
-        from configuracoes import Configuracoes
-        from preferencias import Preferencias
+        from baixador.app.central import Central
+        from baixador.nucleo.configuracoes import Configuracoes
+        from baixador.nucleo.preferencias import Preferencias
 
         self.central = Central(
             Configuracoes(raiz=self.raiz,
@@ -166,7 +166,7 @@ class TestRegraNaFachada(unittest.TestCase):
                          duracao_maxima_min=5, filtrar_ao_vivo=True))
 
     def test_fachada_usa_o_teto_das_preferencias(self):
-        from playlist import ItemPlaylist
+        from baixador.web.playlist import ItemPlaylist
 
         itens = [ItemPlaylist(1, "a", "Curta", "https://y/a", 120),
                  ItemPlaylist(2, "b", "Longa", "https://y/b", 1200),
@@ -177,7 +177,7 @@ class TestRegraNaFachada(unittest.TestCase):
         self.assertIn("limite", avaliados[1][1].motivo)
 
     def test_preferencia_invalida_e_recusada(self):
-        from preferencias import Preferencias
+        from baixador.nucleo.preferencias import Preferencias
 
         with self.assertRaises(ValueError):
             Preferencias(duracao_maxima_min=601).validar()
