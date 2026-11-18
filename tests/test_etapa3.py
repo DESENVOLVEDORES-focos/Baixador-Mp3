@@ -102,7 +102,7 @@ class TestCookies(AmbienteTemporario):
         info = cookies_youtube.importar(self._arquivo("origem.txt", COOKIES_V1), self.config)
         self.assertTrue(info.valido)
         self.assertEqual((info.total, info.do_youtube), (2, 2))
-        self.assertEqual(info.caminho, self.config.dados / "cookies.txt")
+        self.assertTrue(os.path.samefile(info.caminho, self.config.dados / "cookies.txt"))
         self.assertTrue(info.caminho.is_file())
         status = cookies_youtube.status(self.config)
         self.assertTrue(status.configurado and status.valido)
@@ -160,7 +160,7 @@ class TestCookiesNoYtDlp(AmbienteTemporario):
         (self.config.dados).mkdir(parents=True, exist_ok=True)
         (self.config.dados / "cookies.txt").write_text(COOKIES_V1, encoding="utf-8")
         resolvido = self.config.resolver_cookies()
-        self.assertEqual(resolvido, (self.config.dados / "cookies.txt").resolve())
+        self.assertTrue(os.path.samefile(resolvido, self.config.dados / "cookies.txt"))
 
 
 class TestControladorInterface(AmbienteTemporario):
@@ -190,8 +190,8 @@ class TestControladorInterface(AmbienteTemporario):
         info = controlador.importar_cookies(origem)
         self.assertTrue(info.valido)
         self.assertEqual(carregar(self.config).cookies_caminho, str(info.caminho))
-        self.assertEqual(controlador.aplicacao.config.resolver_cookies(),
-                         (self.config.dados / "cookies.txt").resolve())
+        resolvido = controlador.aplicacao.config.resolver_cookies()
+        self.assertTrue(os.path.samefile(resolvido, self.config.dados / "cookies.txt"))
         self.assertTrue(controlador.remover_cookies())
         self.assertEqual(carregar(self.config).cookies_caminho, "")
 

@@ -35,7 +35,7 @@ jobs:
         run: python -m compileall -q . -x '(\.git|ferramentas)'
 
       - name: Testes
-        run: python -m pytest -q
+        run: python -m pytest -q -rf --tb=short
 
       - name: Interface importa sem erro (sem abrir janela)
         run: python -c "import interface, musica, downloader, pesquisa, preferencias, cookies_youtube, thumbs; print('imports ok')"

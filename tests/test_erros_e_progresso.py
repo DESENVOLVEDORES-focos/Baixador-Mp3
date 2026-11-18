@@ -208,7 +208,7 @@ class TestProgresso(Base):
         percentuais = [e.percentual for e in eventos if e.percentual is not None]
         self.assertEqual(percentuais, [10.2, 55.7, 100.0])
         # Publicado na pasta final com o nome limpo, sem intermediários.
-        self.assertEqual(resultado.caminho.parent, self.config.musicas.resolve())
+        self.assertTrue(os.path.samefile(resultado.caminho.parent, self.config.musicas))
         self.assertEqual(list(self.config.musicas.iterdir()), [resultado.caminho])
         etapas = {e.etapa for e in eventos}
         self.assertIn(ETAPA_CONVERTENDO, etapas)

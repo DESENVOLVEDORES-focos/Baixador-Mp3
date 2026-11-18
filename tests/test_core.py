@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -118,8 +119,8 @@ class TestDownloader(unittest.TestCase):
 
             with patch("downloader.subprocess.Popen", PopenQueCria("", 0)):
                 resultado = downloader.baixar("https://example.org/a", "mp3")
-            self.assertEqual(resultado.caminho,
-                             (config.musicas / "faixa [abc].mp3").resolve())
+            self.assertTrue(os.path.samefile(
+                resultado.caminho, config.musicas / "faixa [abc].mp3"))
 
     def test_localizador_ignora_arquivo_vazio_e_extensao_errada(self):
         with tempfile.TemporaryDirectory() as temp:
