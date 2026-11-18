@@ -1,0 +1,4 @@
+# Ferramentas de desenvolvimento/teste (não necessárias para usar o programa)
+-r requirements.txt
+pytest>=8
+pyflakes>=3

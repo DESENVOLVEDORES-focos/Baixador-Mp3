@@ -1,12 +1,4 @@
 @echo off
-rem Baixador-Mp3 - abre a interface grafica sem precisar de terminal.
-cd /d "%~dp0"
-where py >nul 2>nul && (py -3 interface.py & goto :fim)
-python interface.py
-:fim
-if errorlevel 1 (
-  echo.
-  echo O programa encontrou um erro. Confira se o Python esta instalado
-  echo e execute instalar_windows.bat uma vez.
-  pause
-)
+rem Compatibilidade: mantido porque o README antigo citava este nome.
+rem Use iniciar.bat (entrada oficial do programa).
+call "%~dp0iniciar.bat"

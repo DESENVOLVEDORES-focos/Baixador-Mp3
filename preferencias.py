@@ -26,7 +26,7 @@ import json
 import logging
 import os
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from configuracoes import CONFIG, Configuracoes
@@ -137,10 +137,17 @@ class Preferencias:
     # Inteligência musical (IA 2)
     metadados_ativos: bool = True
     buscar_capas: bool = True
+    # O que fazer quando o arquivo final já existe (nunca sobrescreve por
+    # acidente): perguntar | pular | renomear | sobrescrever
+    sobrescrita: str = "perguntar"
 
     def validar(self) -> None:
         if self.formato_padrao not in ("mp3", "mp4"):
             raise ValueError("Formato padrão deve ser 'mp3' ou 'mp4'.")
+        if str(self.sobrescrita).lower() not in {
+                "perguntar", "pular", "renomear", "sobrescrever"}:
+            raise ValueError(
+                "Política de sobrescrita inválida (perguntar/pular/renomear/sobrescrever).")
         if not 1 <= int(self.limite_pesquisa) <= 50:
             raise ValueError("O limite de pesquisa deve estar entre 1 e 50.")
         qualidade = str(self.qualidade_mp3).strip()
@@ -226,6 +233,10 @@ def derivar_configuracoes(prefs: Preferencias,
         diretorio_videos=Path(prefs.diretorio_mp4).expanduser() if prefs.diretorio_mp4 else None,
         caminho_cookies=cookies,
         qualidade_mp3=str(prefs.qualidade_mp3 or "0"),
+        # "perguntar" é resolvido na interface; no núcleo o padrão seguro é
+        # não sobrescrever (a pergunta acontece antes de baixar).
+        sobrescrita="pular" if str(prefs.sobrescrita).lower() == "perguntar"
+        else str(prefs.sobrescrita).lower(),
     )
 
 

@@ -6,8 +6,10 @@ import argparse
 import json
 import sys
 import time
+from typing import Any
+
 from configuracoes import CONFIG, Configuracoes
-from downloader import Downloader, ErroDownload
+from downloader import Downloader, ErroDownload, Progresso
 from fila import FilaDownloads
 from historico import Historico
 from integracao import AdaptadorMetadados
@@ -38,16 +40,42 @@ class Aplicacao:
         self.historico = Historico(configuracoes)
         self.metadados = AdaptadorMetadados()
 
-    def baixar(self, url: str, formato: str) -> tuple[bool, str]:
+    def baixar(self, url: str, formato: str, ao_progresso: Any = None,
+               politica: str | None = None) -> tuple[bool, str]:
+        """Baixa e (em MP3) enriquece; nunca deixa falha virar traceback.
+
+        Retorna ``(sucesso, mensagem)``. Arquivo já existente com a política
+        ``pular`` devolve ``(True, motivo)`` sem baixar e sem sobrescrever.
+        """
         try:
-            resultado = self.downloader.baixar(url, formato)  # type: ignore[arg-type]
+            try:
+                resultado = self.downloader.baixar(  # type: ignore[arg-type]
+                    url, formato, ao_progresso=ao_progresso, politica=politica)
+            except TypeError:
+                # Downloader injetado (testes/fakes) sem suporte a progresso.
+                resultado = self.downloader.baixar(url, formato)  # type: ignore[arg-type]
+            if isinstance(resultado, tuple):  # fake de teste devolve (ok, msg)
+                return bool(resultado[0]), str(resultado[1] if len(resultado) > 1 else "")
+            if resultado.pulado:
+                self.historico.registrar(
+                    url=url, formato=formato, status="pulado",
+                    mensagem=resultado.motivo, inicio=resultado.iniciado_em,
+                )
+                print(f"[PULADO] {resultado.motivo}", file=sys.stderr)
+                return True, resultado.motivo
+            if resultado.caminho is None:  # pragma: no cover - defensivo
+                raise ErroDownload("O yt-dlp não informou o arquivo final.")
             caminho = resultado.caminho
             aviso = ""
             if formato == "mp3" and self.metadados.disponivel:
                 try:
+                    # Contrato v2 (retrocompatível): além dos campos originais,
+                    # o título/canal ajudam a IA 2 a identificar sem depender só
+                    # do nome do arquivo.
                     caminho = self.metadados.processar_mp3(caminho, {
                         "url": resultado.url,
                         "formato": resultado.formato,
+                        "titulo": resultado.caminho.stem,
                         "caminho": str(resultado.caminho),
                         "inicio": resultado.iniciado_em,
                         "conclusao": resultado.finalizado_em,
@@ -89,7 +117,8 @@ class Aplicacao:
             if item is None:
                 return concluidos
             print(f"[FILA] {item.formato.upper()} {item.url} (tentativa {item.tentativas})")
-            sucesso, mensagem = self.baixar(item.url, item.formato)
+            sucesso, mensagem = self.baixar(item.url, item.formato,
+                                            ao_progresso=_progresso_terminal)
             if sucesso:
                 self.fila.concluir(item.id)
                 concluidos += 1
@@ -126,11 +155,27 @@ def _criar_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("gui", help="Abre a interface gráfica (sem terminal)")
 
-    reabrir = sub.add_parser("retry-failed", help="Reabre itens que esgotaram as tentativas")
+    sub.add_parser("retry-failed", help="Reabre itens que esgotaram as tentativas")
     historico = sub.add_parser("history", help="Exibe downloads e falhas recentes")
     historico.add_argument("--limite", type=int, default=20)
     sub.add_parser("check", help="Verifica se yt-dlp e FFmpeg estão disponíveis")
     return parser
+
+
+def _progresso_terminal(progresso: Progresso) -> None:
+    """Progresso compacto no stderr (não interfere em scripts que leem stdout)."""
+    partes = [progresso.etapa]
+    if progresso.percentual is not None:
+        partes.append(f"{progresso.percentual:.1f}%")
+    if progresso.total:
+        partes.append(f"de {progresso.total}")
+    if progresso.velocidade:
+        partes.append(f"a {progresso.velocidade}")
+    if progresso.eta:
+        partes.append(f"ETA {progresso.eta}")
+    print("\r" + " | ".join(partes), end="", file=sys.stderr, flush=True)
+    if progresso.percentual is not None and progresso.percentual >= 100:
+        print(file=sys.stderr)
 
 
 def _mostrar_resultados(resultados: list[Any]) -> None:
@@ -157,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
         app = Aplicacao()
         app.config.preparar_diretorios()
         if args.comando == "download":
-            sucesso, _ = app.baixar(args.url, args.formato)
+            sucesso, _ = app.baixar(args.url, args.formato,
+                                    ao_progresso=_progresso_terminal)
             return 0 if sucesso else 1
         if args.comando == "search":
             resultados = app.pesquisador.pesquisar(args.consulta, args.limite)

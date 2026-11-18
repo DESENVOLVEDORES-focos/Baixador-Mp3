@@ -73,8 +73,24 @@ class ControladorInterface:
         return self.aplicacao.pesquisador.pesquisar(
             consulta, self.preferencias.limite_pesquisa)
 
-    def baixar(self, url: str, formato: str) -> tuple[bool, str]:
-        return self.aplicacao.baixar(url, formato)
+    def baixar(self, url: str, formato: str, ao_progresso=None,
+               politica: str | None = None) -> tuple[bool, str]:
+        return self.aplicacao.baixar(url, formato, ao_progresso=ao_progresso,
+                                     politica=politica)
+
+    def pasta_dados(self) -> Path:
+        return self.config.dados
+
+    def resumo_musical(self) -> dict[str, Any]:
+        """Resumo do último enriquecimento (álbum/ano/capa) para a tela.
+
+        Vem de ``ProcessadorMusical.ultimo_resumo`` quando o módulo expõe isso;
+        sem dado confirmado, devolve ``{}`` — a interface diz explicitamente
+        "não confirmado" em vez de inventar informação musical.
+        """
+        processador = getattr(self.aplicacao.metadados, "_processador", None)
+        resumo = getattr(processador, "ultimo_resumo", None)
+        return dict(resumo) if isinstance(resumo, dict) else {}
 
     # -- fila e histórico ---------------------------------------------------
     def adicionar_fila(self, url: str, formato: str):
@@ -167,6 +183,72 @@ class ControladorInterface:
         return ("invalida", "O serviço respondeu, mas sem resultados de teste.")
 
 
+def _data_legivel(valor: Any) -> str:
+    """ISO-8601 → "17/11/2026 21:35" (fuso local). Entrada inválida = ""."""
+    texto = str(valor or "").strip()
+    if not texto:
+        return ""
+    try:
+        from datetime import datetime
+
+        data = datetime.fromisoformat(texto.replace("Z", "+00:00"))
+        if data.tzinfo is not None:
+            data = data.astimezone()
+        return data.strftime("%d/%m/%Y %H:%M")
+    except (ValueError, TypeError, OverflowError):
+        return texto[:19]
+
+
+def _parece_falta_de_login(mensagem: str) -> bool:
+    """Sinais clássicos de conteúdo que exige login/cookies (sem inventar)."""
+    texto = (mensagem or "").lower()
+    sinais = ("sign in", "login", "log in", "confirm your age", "age-restricted",
+              "faça login", "idades", "members-only", "private video",
+              "this video is private", "cookies")
+    return any(sinal in texto for sinal in sinais)
+
+
+def _resumo_texto(resumo: dict[str, Any]) -> str:
+    """Resumo legível do enriquecimento, sem inventar campo ausente."""
+    partes: list[str] = []
+    artista = str(resumo.get("artista") or "").strip()
+    titulo = str(resumo.get("titulo") or "").strip()
+    if artista or titulo:
+        partes.append(" — ".join(p for p in (artista, titulo) if p))
+    album = str(resumo.get("album") or "").strip()
+    ano = resumo.get("ano")
+    if album or ano:
+        partes.append(f"{album or 'álbum não identificado'}"
+                      + (f" ({ano})" if ano else ""))
+    capa = "capa incorporada" if resumo.get("capa_incorporada") else "sem capa"
+    fonte = str(resumo.get("fonte") or "").strip()
+    if fonte and fonte != "nome_do_arquivo":
+        partes.append(f"{capa} · fonte: {fonte}")
+    else:
+        partes.append(f"{capa} · identificação não confirmada "
+                      "(apenas o nome do arquivo)")
+    return " | ".join(partes)
+
+
+def _miniatura_tk(caminho: Path, tamanho: tuple[int, int] = (224, 126)) -> Any:
+    """PhotoImage da miniatura; ``None`` quando Pillow/Tk não permitem.
+
+    Tk puro só lê PNG/GIF; os thumbnails do YouTube são JPEG, então Pillow
+    (opcional, declarado no requirements) é usado para decodificar e reduzir.
+    """
+    try:
+        from PIL import Image, ImageTk  # type: ignore
+    except ImportError:
+        return None
+    try:
+        with Image.open(caminho) as imagem:
+            imagem = imagem.convert("RGB")
+            imagem.thumbnail(tamanho)
+            return ImageTk.PhotoImage(imagem)
+    except Exception:  # imagem corrompida nunca derruba a interface
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Interface Tkinter
 # ---------------------------------------------------------------------------
@@ -194,7 +276,8 @@ class AplicativoGrafico:
         raiz.minsize(880, 600)
 
         self.status_var = tk.StringVar(value="Pronto.")
-        self.progresso = ttk.Progressbar(raiz, mode="indeterminate")
+        # Barra determinada: sem progresso real ela fica em 0 (não "gira").
+        self.progresso = ttk.Progressbar(raiz, mode="determinate", maximum=100)
         abas = ttk.Notebook(raiz)
         abas.pack(fill="both", expand=True, padx=8, pady=(8, 4))
         self.progresso.pack(fill="x", padx=8)
@@ -238,7 +321,12 @@ class AplicativoGrafico:
             while True:
                 tipo, valor, callback = self._fila_eventos.get_nowait()
                 self.progresso.stop()
-                if tipo == "ok" and callback:
+                if tipo == "progresso":
+                    item, progresso = valor
+                    self._aplicar_progresso(item, progresso)
+                elif tipo == "thumb":
+                    self._mostrar_thumb(valor)
+                elif tipo == "ok" and callback:
                     callback(valor)
                 elif tipo == "erro":
                     if callback:
@@ -287,15 +375,28 @@ class AplicativoGrafico:
         meio = ttk.Frame(aba)
         meio.pack(fill="both", expand=True, padx=8, pady=4)
         ttk.Label(meio, text="Resultados encontrados:").pack(anchor="w")
+        corpo = ttk.Frame(meio)
+        corpo.pack(fill="both", expand=True)
         self.resultados_tree = ttk.Treeview(
-            meio, columns=("titulo", "canal", "duracao"),
-            show="headings", height=10)
+            corpo, columns=("titulo", "canal", "duracao", "oficial"),
+            show="headings", height=10, selectmode="browse")
         for coluna, titulo, largura in (
-                ("titulo", "Título", 430), ("canal", "Canal", 220),
-                ("duracao", "Duração", 90)):
+                ("titulo", "Título", 420), ("canal", "Canal", 200),
+                ("duracao", "Duração", 80), ("oficial", "Canal verificado", 120)):
             self.resultados_tree.heading(coluna, text=titulo)
             self.resultados_tree.column(coluna, width=largura)
-        self.resultados_tree.pack(fill="both", expand=True)
+        self.resultados_tree.pack(side="left", fill="both", expand=True)
+        rolagem = ttk.Scrollbar(corpo, orient="vertical",
+                                command=self.resultados_tree.yview)
+        self.resultados_tree.configure(yscrollcommand=rolagem.set)
+        rolagem.pack(side="right", fill="y")
+        # Miniatura do resultado selecionado (carregada em thread).
+        self.thumb_label = tk.Label(meio, text="Selecione um resultado",
+                                    width=24, height=7, relief="groove",
+                                    background="#f0f0f0")
+        self.thumb_label.pack(fill="x", pady=4)
+        self.resultados_tree.bind("<<TreeviewSelect>>", self._ao_selecionar_resultado)
+        self.resultados_tree.bind("<Double-1>", lambda _e: self._ao_baixar_selecionado())
         botoes = ttk.Frame(aba)
         botoes.pack(fill="x", padx=8, pady=4)
         ttk.Button(botoes, text="Baixar selecionado",
@@ -303,9 +404,84 @@ class AplicativoGrafico:
         ttk.Button(botoes, text="Adicionar selecionado à fila",
                    command=self._ao_enfileirar_selecionado).pack(side="left", padx=6)
 
+        self._montar_downloads(aba)
+
         ttk.Label(aba, text="Mensagens:").pack(anchor="w", padx=8)
         self.log_text = tk.Text(aba, height=7, state="disabled", wrap="word")
         self.log_text.pack(fill="both", expand=False, padx=8, pady=(0, 8))
+
+    def _montar_downloads(self, aba: Any) -> None:
+        """Acompanhamento por item: %, velocidade, tamanho e etapa atual."""
+        quadro = ttk.LabelFrame(aba, text="Downloads")
+        quadro.pack(fill="both", expand=True, padx=8, pady=(6, 0))
+        self.downloads_tree = ttk.Treeview(
+            quadro, columns=("titulo", "formato", "progresso", "velocidade",
+                             "tamanho", "etapa"),
+            show="headings", height=5, selectmode="browse")
+        for coluna, titulo, largura in (
+                ("titulo", "Título", 300), ("formato", "Formato", 70),
+                ("progresso", "%", 70), ("velocidade", "Velocidade", 110),
+                ("tamanho", "Tamanho", 130), ("etapa", "Etapa atual", 190)):
+            self.downloads_tree.heading(coluna, text=titulo)
+            self.downloads_tree.column(coluna, width=largura)
+        self.downloads_tree.pack(fill="both", expand=True, padx=6, pady=6)
+        botoes = ttk.Frame(quadro)
+        botoes.pack(fill="x", padx=6, pady=(0, 6))
+        ttk.Button(botoes, text="Abrir pasta da música",
+                   command=lambda: self._abrir_pasta(self.controlador.config.musicas)
+                   ).pack(side="left")
+        ttk.Button(botoes, text="Abrir pasta dos vídeos",
+                   command=lambda: self._abrir_pasta(self.controlador.config.videos)
+                   ).pack(side="left", padx=6)
+
+    def _abrir_pasta(self, pasta: Path) -> None:
+        try:
+            pasta.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt":
+                os.startfile(str(pasta))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                os.system(f'open "{pasta}"')
+            else:
+                os.system(f'xdg-open "{pasta}" >/dev/null 2>&1 &')
+        except Exception as erro:
+            messagebox.showerror("Baixador-Mp3", f"Não foi possível abrir a pasta: {erro}")
+
+    def _ao_selecionar_resultado(self, _evento: Any = None) -> None:
+        resultado = self._selecionado(silencioso=True)
+        if resultado is None:
+            return
+        url = getattr(resultado, "thumbnail", "") or ""
+        self.thumb_label.configure(image="", text="Carregando miniatura...")
+
+        def carregar() -> None:
+            dados_dir = self.controlador.pasta_dados()
+            try:
+                from thumbs import obter
+
+                caminho = obter(url, dados_dir)
+            except Exception:
+                caminho = None
+            self._fila_eventos.put(("thumb", caminho, None))
+
+        if not url:
+            self.thumb_label.configure(text="Sem miniatura disponível")
+            return
+        threading.Thread(target=carregar, daemon=True).start()
+
+    def _mostrar_thumb(self, caminho: Any) -> None:
+        if caminho is None:
+            self.thumb_label.configure(image="", text="Miniatura indisponível")
+            self.thumb_label.image = None  # type: ignore[attr-defined]
+            return
+        imagem = _miniatura_tk(Path(caminho))
+        if imagem is None:
+            self.thumb_label.configure(
+                image="",
+                text="Miniatura baixada.\nInstale Pillow para exibi-la:\n"
+                     "python -m pip install Pillow")
+            return
+        self.thumb_label.image = imagem  # type: ignore[attr-defined]
+        self.thumb_label.configure(image=imagem, text="")
 
     def _ao_pesquisar(self) -> None:
         consulta = self.busca_var.get().strip()
@@ -321,38 +497,108 @@ class AplicativoGrafico:
             for resultado in resultados:
                 self.resultados_tree.insert("", "end", values=(
                     resultado.titulo, resultado.canal,
-                    resultado.duracao_formatada))
+                    resultado.duracao_formatada,
+                    "sim (evidência do extrator)"
+                    if getattr(resultado, "canal_verificado", False) else "não"))
             self._registrar(f"Pesquisa: {len(resultados)} resultado(s).")
             self._definir_status(f"{len(resultados)} resultado(s) encontrado(s).")
 
         self._executar(lambda: self.controlador.pesquisar(consulta), concluir)
 
-    def _selecionado(self):
+    def _selecionado(self, silencioso: bool = False):
         escolha = self.resultados_tree.selection()
         if not escolha:
-            messagebox.showwarning("Baixador-Mp3", "Selecione um resultado.")
+            if not silencioso:
+                messagebox.showwarning("Baixador-Mp3", "Selecione um resultado.")
             return None
         indice = self.resultados_tree.index(escolha[0])
         return self._resultados[indice] if indice < len(self._resultados) else None
 
     def _baixar(self, url: str, formato: str) -> None:
-        self._definir_status(f"Baixando {formato.upper()}...")
+        self._definir_status(f"Preparando {formato.upper()}...")
+        item = self.downloads_tree.insert("", "end", values=(
+            url, formato.upper(), "0%", "", "", "Preparando"))
+        self.progresso.configure(value=0)
+
+        def ao_progresso(progresso: Any) -> None:
+            # Chamado da thread do download: só publica o evento.
+            self._fila_eventos.put(("progresso", (item, progresso), None))
 
         def concluir(resultado: tuple[bool, str]) -> None:
             sucesso, mensagem = resultado
             if sucesso:
+                self.downloads_tree.item(item, values=(
+                    url, formato.upper(), "100%", "", "", "Concluído"))
                 texto = f"[OK] Download {formato.upper()} concluído."
+                resumo = self.controlador.resumo_musical()
+                if resumo:
+                    texto += " " + _resumo_texto(resumo)
                 if mensagem:
                     texto += f" Aviso: {mensagem}"
                 self._registrar(texto)
                 self._definir_status("Download concluído.")
+                self.progresso.configure(value=100)
             else:
+                self.downloads_tree.item(item, values=(
+                    url, formato.upper(), "", "", "", f"Falhou: {mensagem[:60]}"))
                 self._registrar(f"[ERRO] {mensagem}")
+                if _parece_falta_de_login(mensagem):
+                    self._registrar(
+                        "[DICA] Este erro costuma indicar que o conteúdo exige "
+                        "autenticação. Importe seu cookies.txt em Configurações → "
+                        "COOKIES DO YOUTUBE e tente de novo.")
                 self._definir_status("O download falhou; veja as mensagens.")
+                self.progresso.configure(value=0)
             self._atualizar_historico()
             self._atualizar_fila()
 
-        self._executar(lambda: self.controlador.baixar(url, formato), concluir)
+        def rodar():
+            return self.controlador.baixar(url, formato, ao_progresso=ao_progresso)
+
+        def concluir_com_pergunta(resultado: tuple[bool, str]) -> None:
+            sucesso, mensagem = resultado
+            concluir(resultado)
+            # Política "perguntar": o núcleo não sobrescreveu; oferecemos baixar
+            # como cópia, com o nome renomeado — sempre com autorização.
+            if (sucesso and "já existe" in mensagem
+                    and self.prefs.sobrescrita == "perguntar"):
+                if messagebox.askyesno(
+                        "Arquivo já existe",
+                        "Este arquivo já está na pasta e nada foi sobrescrito.\n\n"
+                        "Baixar mesmo assim, criando uma cópia com outro nome?"):
+                    item2 = self.downloads_tree.insert("", "end", values=(
+                        url, formato.upper(), "0%", "", "", "Baixando cópia"))
+                    self._executar(
+                        lambda: self.controlador.baixar(
+                            url, formato, ao_progresso=lambda p: self._fila_eventos.put(
+                                ("progresso", (item2, p), None)),
+                            politica="renomear"),
+                        concluir)
+
+        self._executar(rodar, concluir_com_pergunta)
+
+    def _aplicar_progresso(self, item: str, progresso: Any) -> None:
+        """Atualiza a linha do item com o que o yt-dlp realmente informou."""
+        valores = list(self.downloads_tree.item(item, "values"))
+        if not valores:  # item removido
+            return
+        while len(valores) < 6:
+            valores.append("")
+        if progresso.percentual is not None:
+            valores[2] = f"{progresso.percentual:.0f}%"
+            self.progresso.configure(value=progresso.percentual)
+        if progresso.velocidade:
+            valores[3] = progresso.velocidade
+        if progresso.total:
+            valores[4] = (f"{progresso.baixado} / {progresso.total}"
+                          if progresso.baixado else progresso.total)
+        valores[5] = progresso.etapa
+        self.downloads_tree.item(item, values=valores)
+        self._definir_status(
+            f"{progresso.etapa}"
+            + (f" — {progresso.percentual:.0f}%" if progresso.percentual is not None else "")
+            + (f" — {progresso.velocidade}" if progresso.velocidade else "")
+            + (f" — faltam {progresso.eta}" if progresso.eta else ""))
 
     def _ao_baixar_url(self) -> None:
         url = self.url_var.get().strip()
@@ -451,7 +697,7 @@ class AplicativoGrafico:
             return
         for registro in registros:
             self.historico_tree.insert("", "end", values=(
-                registro.get("registrado_em") or registro.get("inicio") or "",
+                _data_legivel(registro.get("data_hora")),
                 str(registro.get("formato") or "").upper(),
                 registro.get("status") or "",
                 registro.get("caminho") or registro.get("url") or "",
@@ -531,10 +777,9 @@ class AplicativoGrafico:
             anchor="w", padx=6)
         botoes_cookies = ttk.Frame(cookies)
         botoes_cookies.pack(fill="x", padx=6, pady=6)
-        ttk.Button(botoes_cookies, text="Selecionar cookies.txt...",
+        self.cookies_botao_var = tk.StringVar(value="Selecionar cookies.txt...")
+        ttk.Button(botoes_cookies, textvariable=self.cookies_botao_var,
                    command=self._ao_importar_cookies).pack(side="left")
-        ttk.Button(botoes_cookies, text="Substituir...",
-                   command=self._ao_importar_cookies).pack(side="left", padx=6)
         ttk.Button(botoes_cookies, text="Verificar",
                    command=self._atualizar_status_cookies).pack(side="left")
         ttk.Button(botoes_cookies, text="Remover",
@@ -565,6 +810,14 @@ class AplicativoGrafico:
         self.limite_var = tk.StringVar(value=str(prefs.limite_pesquisa))
         ttk.Entry(downloads, textvariable=self.limite_var, width=14).grid(
             row=4, column=1, sticky="w", pady=2)
+        ttk.Label(downloads, text="Se o arquivo já existir:\n(nada é sobrescrito sem escolha)").grid(
+            row=7, column=0, sticky="e", padx=6)
+        self.sobrescrita_var = tk.StringVar(
+            value=getattr(prefs, "sobrescrita", "perguntar"))
+        ttk.Combobox(downloads, textvariable=self.sobrescrita_var,
+                     values=("perguntar", "pular", "renomear", "sobrescrever"),
+                     width=16, state="readonly").grid(
+            row=7, column=1, sticky="w", pady=2)
         self.metadados_var = tk.BooleanVar(value=prefs.metadados_ativos)
         ttk.Checkbutton(downloads, text="Preencher metadados e capas automaticamente (IA 2)",
                         variable=self.metadados_var).grid(
@@ -625,9 +878,20 @@ class AplicativoGrafico:
             return
         if not info.configurado:
             texto = "Nenhum cookies.txt configurado (downloads públicos funcionam sem ele)."
+            self.cookies_botao_var.set("Selecionar cookies.txt...")
         elif info.valido:
+            idade = ""
+            try:
+                from datetime import datetime
+
+                quando = datetime.fromtimestamp(info.caminho.stat().st_mtime)  # type: ignore[union-attr]
+                dias = (datetime.now() - quando).days
+                idade = f" importado em {quando.strftime('%d/%m/%Y')} ({dias} dia(s))"
+            except OSError:
+                idade = ""
             texto = (f"Configurado e válido: {info.total} cookie(s), "
-                     f"{info.do_youtube} do YouTube/Google — {info.caminho}")
+                     f"{info.do_youtube} do YouTube/Google{idade} — {info.caminho}")
+            self.cookies_botao_var.set("Substituir cookies.txt...")
         else:
             texto = f"Configurado, mas inválido: {info.mensagem}"
         self.cookies_status_var.set(texto)
@@ -667,6 +931,12 @@ class AplicativoGrafico:
         except ValueError:
             messagebox.showerror("Configurações", "Resultados por pesquisa deve ser um número.")
             return False
+        sobrescrita = str(self.sobrescrita_var.get() or "perguntar").lower()
+        if sobrescrita == "sobrescrever":
+            if not messagebox.askyesno(
+                    "Sobrescrita", "Com 'sobrescrever' o programa pode substituir "
+                                   "um arquivo já existente na pasta. Confirmar?"):
+                return False
         novas = Preferencias(
             ia_api_key=self.ia_chave_var.get().strip(),
             ia_modelo=self.ia_modelo_var.get().strip() or IA_MODELO_PADRAO,
@@ -679,6 +949,7 @@ class AplicativoGrafico:
             limite_pesquisa=limite,
             metadados_ativos=bool(self.metadados_var.get()),
             buscar_capas=bool(self.capas_var.get()),
+            sobrescrita=sobrescrita,
         )
         try:
             self.controlador.salvar_preferencias(novas)

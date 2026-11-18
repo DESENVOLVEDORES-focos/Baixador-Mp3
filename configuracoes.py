@@ -24,6 +24,9 @@ class Configuracoes:
     diretorio_videos: Path | None = None
     caminho_cookies: Path | None = None
     qualidade_mp3: str = "0"
+    # Política quando o arquivo final já existe: pular (padrão, não sobrescreve),
+    # renomear (cria "nome (2).mp3") ou sobrescrever (só com autorização explícita).
+    sobrescrita: str = "pular"
 
     @property
     def ferramentas(self) -> Path:

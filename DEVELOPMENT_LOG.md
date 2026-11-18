@@ -1,3 +1,80 @@
+
+## 2026-11-17 — Etapa A/B (IA 3): auditoria executada, correções e interface utilizável
+
+### Método (diferente das etapas anteriores)
+- Ambiente próprio: Python 3.11 + `yt-dlp 2026.10.26` + `ffmpeg n9.0.2`
+  (imageio-ffmpeg) + `mutagen` + `Pillow`, instalados de PyPI.
+- Como YouTube e APIs de música são bloqueados no sandbox, o download real foi
+  validado **servindo mídia local** por `http.server` (`.m4a` 3 s e `.mp4`
+  320x240) e apontando o próprio núcleo para ela. Isso exercita yt-dlp, FFmpeg,
+  verificação de arquivo, progresso, limpeza e histórico de verdade.
+- Cada defeito foi **reproduzido antes** de ser corrigido (ver AUDITORIA.md).
+
+### Reproduções que motivaram as correções
+- URL 404 → `NameError: name 'line' is not defined` (traceback) em
+  `downloader.py:152`.
+- Dois downloads do mesmo item → MP3 regravado (30569 → 30674 bytes) e
+  reportado como sucesso, apesar de `--no-overwrites`.
+- `typing.get_type_hints` em `musica.py` → `NameError: Any`.
+- GUI: coluna "Quando" do histórico vazia (lê `registrado_em`; o histórico grava
+  `data_hora`); `ResultadoPesquisa` sem `thumbnail`; barra indeterminada.
+- `pyflakes`: 7 avisos, 2 deles bugs reais.
+
+### Implementação
+- `downloader.py` reescrito em volta de `Popen` + `--newline`: progresso por
+  etapa, `Progresso`/`interpretar_linha`, `ao_progresso`, `politica`
+  (pular/renomear/sobrescrever), pasta de trabalho em `.baixador/` e
+  `_publicar()` com nome livre; `_resumir_erro` corrigido; `_comunicar` isola a
+  conversa com o processo.
+- `configuracoes.py`: campo `sobrescrita` (padrão `pular`).
+- `musica.py`: `baixar(url, formato, ao_progresso=, politica=)`,
+  `[PULADO]`/`[ERRO]` tratados, progresso compacto no `stderr`, `Any` importado,
+  variável morta removida, contrato v2 (envia `titulo` ao `processar_mp3`).
+- `pesquisa.py`: `thumbnail` (maior disponível; só usa URL canônica do YouTube
+  quando não há dado, nunca inventa).
+- `interface.py`: painel Downloads (%, velocidade, tamanho, etapa), miniatura
+  assíncrona do resultado selecionado, data correta no histórico, resumo
+  musical, dica de cookies em erro de login, política de sobrescrita com
+  confirmação e oferta de cópia renomeada, botão único de cookies com data,
+  `resumo_musical()`/`pasta_dados()` no controlador.
+- `thumbs.py` (novo): cache com validação por assinatura de imagem e poda.
+- `preferencias.py`: `sobrescrita` persistente e validada.
+- Instalação: `configurar.bat` (Python + pip + yt-dlp.exe + ffmpeg.exe + pastas
+  + `check`), `iniciar.bat` (entrada única, `pythonw`), `iniciar_interface.bat`
+  mantido como compatibilidade; `instalar_windows.bat` removido (substituído).
+- `requirements.txt` com Pillow; `requirements-dev.txt`; `.github/workflows/ci.yml`.
+
+### Testes executados (saída real)
+- `python -m pyflakes *.py tests/*.py` → vazio.
+- `python -m pytest -q` → **87 passed, 1 skipped** (54 anteriores preservados;
+  o único skip é a janela Tk, sem Tkinter neste Linux).
+- `python -m compileall -q . -x '(\.git|ferramentas)'` → ok.
+- Download real MP3: `[OK] .../Musicas/teste [teste].mp3`, progresso
+  2.1% → 100% com velocidade e ETA.
+- Download real MP4: h264 + aac, duração preservada, sem recompressão.
+- Falha real (404): `[ERRO] ERROR: [generic] ... HTTP Error 404`, exit 1, sem
+  traceback, registrado em `erros.jsonl`.
+- Repetição: `[PULADO] ... nada foi sobrescrito`, arquivo intacto (mesmo mtime e
+  tamanho); política `renomear` gerou `teste [teste] (2).mp3` com nome limpo.
+- Pastas após todos os testes: apenas `Musicas/teste [teste].mp3` e
+  `Videos/video [video].mp4` — zero intermediários.
+- Enriquecimento com APIs bloqueadas: MP3 preservado, tags do nome do arquivo,
+  `fonte=nome_do_arquivo`, sem inventar álbum/ano/capa.
+- `import interface, musica, thumbs...` → ok (a interface não quebra ao importar
+  sem Tkinter; `python interface.py` encerra com mensagem clara).
+
+### Dúvida de contrato resolvida
+- A IA 2 pediu `titulo`/`canal` no dicionário do `processar_mp3`: o núcleo agora
+  envia `titulo` (nome do arquivo sem extensão). `canal` fica pendente porque o
+  núcleo não recebe os metadados da pesquisa no fluxo de download — registrado
+  para a próxima etapa, sem inventar campo vazio.
+
+### Pendências (não declaradas como prontas)
+- Abrir a janela em Windows real e conferir visual/microinterações.
+- Identificação musical e capa reais (rede liberada) e download no YouTube.
+- Checklist da Etapa D (AUDITORIA.md) no computador do usuário.
+- Gerenciador de APIs multi-serviço (Etapa C) ainda não implementado.
+
 # Diário de desenvolvimento
 
 ## 2026-11-17 — Etapa 1: inspeção, implementação e testes do núcleo

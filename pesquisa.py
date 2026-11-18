@@ -19,6 +19,7 @@ class ResultadoPesquisa:
     url: str
     disponibilidade: str | None = None
     canal_verificado: bool = False
+    thumbnail: str = ""
 
     @property
     def duracao_formatada(self) -> str:
@@ -121,6 +122,7 @@ def _converter_item(item: dict[str, Any]) -> ResultadoPesquisa | None:
     except (TypeError, ValueError, OverflowError):
         duracao = None
     canal = str(item.get("channel") or item.get("uploader") or item.get("channel_id") or "Canal desconhecido")
+    thumbnail = _melhor_thumbnail(item)
     disponibilidade = item.get("availability")
     verificado = item.get("channel_is_verified") is True or item.get("is_verified") is True
     return ResultadoPesquisa(
@@ -131,4 +133,42 @@ def _converter_item(item: dict[str, Any]) -> ResultadoPesquisa | None:
         url=url,
         disponibilidade=str(disponibilidade) if disponibilidade else None,
         canal_verificado=verificado,
+        thumbnail=thumbnail,
     )
+
+
+def _melhor_thumbnail(item: dict[str, Any]) -> str:
+    """Maior thumbnail disponível no resultado flat, sem baixar nada.
+
+    O ``--flat-playlist`` costuma trazer ``thumbnails`` (lista com largura) ou
+    um único ``thumbnail``. Preferimos largura >= 320 para a lista da interface
+    e nunca inventamos uma URL: sem dado, devolvemos string vazia.
+    """
+    lista = item.get("thumbnails")
+    if isinstance(lista, list):
+        validos = []
+        for entrada in lista:
+            if not isinstance(entrada, dict):
+                continue
+            url = str(entrada.get("url") or "").strip()
+            if not url:
+                continue
+            try:
+                largura = int(entrada.get("width") or 0)
+            except (TypeError, ValueError):
+                largura = 0
+            if largura >= 320:
+                validos.append((largura, url))
+        if validos:
+            return max(validos)[1]
+        for entrada in reversed(lista):
+            if isinstance(entrada, dict) and entrada.get("url"):
+                return str(entrada["url"])
+    url = str(item.get("thumbnail") or "").strip()
+    if url:
+        return url
+    identificador = str(item.get("id") or "").strip()
+    # Padrão estável do YouTube (não é invenção: é a URL canônica do vídeo).
+    if identificador and len(identificador) == 11 and "/" not in identificador:
+        return f"https://i.ytimg.com/vi/{identificador}/mqdefault.jpg"
+    return ""

@@ -1,5 +1,74 @@
 # Changelog
 
+## 2026-11-17 — Etapa A/B (IA 3): correções reproduzidas + interface utilizável
+
+Todas as correções abaixo foram motivadas por defeitos **reproduzidos** com
+yt-dlp 2026.10.26 + FFmpeg 9.0.2 + Mutagen reais, servindo mídia por HTTP local
+(ver AUDITORIA.md). Nenhuma foi feita "por precaução".
+
+### Corrigido (núcleo)
+
+- **Falha de download virava `NameError`**: `downloader._resumir_erro` usava a
+  variável inexistente `line`; qualquer erro (404, vídeo privado, sem internet)
+  estourava traceback em vez da mensagem. Corrigido e coberto por teste com
+  saída real do yt-dlp.
+- **Arquivo existente era sobrescrito**, apesar de `--no-overwrites` e do README
+  prometerem o contrário (reproduzido: MP3 de 30569 → 30674 bytes). Agora há
+  política explícita (`perguntar`/`pular`/`renomear`/`sobrescrever`), padrão
+  **perguntar** na interface e **pular** no núcleo; `--force-overwrites` só
+  aparece com autorização. Status próprio `pulado` no histórico.
+- **Intermediários poluíam as pastas**: o download agora acontece numa pasta de
+  trabalho em `.baixador/` e só o arquivo final é movido para `Musicas/`/
+  `Videos/`. Fim dos `.m4a`/`.webm`/`.part` órfãos.
+- **"Renomear" contaminava o título** usado na identificação musical (o arquivo
+  saía como `titulo (20261118-005140)` e o ano virava tag). A desambiguação
+  (`(2)`) passou a ser feita ao publicar, com nome limpo.
+- **Sucesso sem arquivo desta execução**: o caminho final é confirmado por
+  existência + `mtime` da execução; arquivo antigo no stdout não vira sucesso.
+- **`musica.py` quebrava em `typing.get_type_hints`** (`Any` não importado) e
+  tinha variável morta.
+
+### Adicionado
+
+- **Progresso real**: `Downloader.baixar(..., ao_progresso=callback, politica=)`
+  com leitura linha a linha (`--newline`) e parser de %/tamanho/velocidade/ETA e
+  das etapas (baixando, convertendo, mesclando, metadados). A CLI mostra no
+  `stderr`; a interface mostra por item. Callback quebrado nunca derruba o
+  download.
+- **`thumbnail` em `ResultadoPesquisa`** + `thumbs.py` (cache validado por
+  assinatura real, limite de tamanho, poda) para a lista de resultados.
+- **Interface**: painel de *Downloads* com %, velocidade, tamanho e etapa;
+  miniatura do resultado selecionado; coluna "Canal verificado" com evidência;
+  duplo clique para baixar; botões para abrir as pastas; **histórico agora
+  mostra a data** (antes a coluna ficava sempre vazia por ler uma chave
+  inexistente); resumo musical ao concluir ("Artista — Título | Álbum (ano) |
+  capa incorporada") e aviso explícito quando a identificação não foi
+  confirmada; dica automática de cookies quando o erro indica falta de login.
+- **Configuração de sobrescrita** persistente e aviso de data de importação dos
+  cookies com rótulo dinâmico (um botão só, em vez de dois iguais).
+- `thumbs.py`, `tests/test_erros_e_progresso.py` (20 casos) e
+  `tests/test_interface_logica.py` (12 casos).
+
+### Instalação e qualidade
+
+- `configurar.bat` (novo): verifica Python, instala dependências e baixa
+  `yt-dlp.exe` e `ffmpeg.exe` para `ferramentas/`, cria as pastas e roda o
+  `check`. `iniciar.bat` (novo): entrada única, abre sem console (`pythonw`).
+- `requirements.txt` agora inclui **Pillow** (necessário para exibir as
+  miniaturas e redimensionar capas); `requirements-dev.txt` para testes.
+- **CI** em GitHub Actions rodando `pyflakes`, `compileall` e `pytest` em
+  Windows e Linux.
+- **87 testes** (eram 54): 53 antigos preservados, 34 novos no caminho de erro,
+  progresso, sobrescrita, miniaturas e lógica da interface. `pyflakes` limpo.
+
+### Não testado aqui (registrado, não fingido)
+
+- Janela Tkinter real (este Linux não tem Tkinter), identificação/capa reais e
+  download no YouTube (rede bloqueada). Download real de MP3/MP4, progresso,
+  falha e política de sobrescrita **foram** executados com yt-dlp/FFmpeg reais
+  contra um servidor HTTP local.
+
+
 ## 2026-11-17 — Etapa 1: núcleo modular inicial
 
 - Criados configuração portátil por caminhos relativos e descoberta de yt-dlp/FFmpeg para Windows, PATH ou módulo Python.

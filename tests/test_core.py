@@ -4,7 +4,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from configuracoes import Configuracoes
@@ -13,6 +12,26 @@ from fila import FilaDownloads
 from historico import Historico
 from integracao import AdaptadorMetadados
 from pesquisa import Pesquisador, _converter_item, _carregar_json
+
+
+class ProcessoFalso:
+    """Substitui ``subprocess.Popen`` nos testes: argv, saída e código."""
+
+    def __init__(self, saida: str = "", codigo: int = 0):
+        self.argv: list[str] = []
+        self.stdout = iter(saida.splitlines(keepends=True))
+        self.returncode = codigo
+        self._codigo = codigo
+
+    def __call__(self, argv, **kwargs):  # simula subprocess.Popen(argv, ...)
+        self.argv = list(argv)
+        return self
+
+    def wait(self) -> int:
+        return self._codigo
+
+    def kill(self) -> None:
+        pass
 
 
 class FakeConfig:
@@ -75,9 +94,7 @@ class TestDownloader(unittest.TestCase):
             config = FakeConfig(Path(temp))
             config.preparar_diretorios()
             downloader = Downloader(config)  # type: ignore[arg-type]
-            with patch("downloader.subprocess.run", return_value=SimpleNamespace(
-                returncode=0, stdout="", stderr=""
-            )):
+            with patch("downloader.subprocess.Popen", ProcessoFalso("", 0)):
                 with self.assertRaises(ErroDownload):
                     downloader.baixar("https://example.org/a", "mp3")
 
@@ -85,14 +102,24 @@ class TestDownloader(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             config = FakeConfig(Path(temp))
             config.preparar_diretorios()
-            arquivo = config.musicas / "faixa [abc].mp3"
-            arquivo.write_bytes(b"audio")
             downloader = Downloader(config)  # type: ignore[arg-type]
-            with patch("downloader.subprocess.run", return_value=SimpleNamespace(
-                returncode=0, stdout=str(arquivo) + "\n", stderr=""
-            )):
+
+            class PopenQueCria(ProcessoFalso):
+                def __call__(self, argv, **kwargs):  # cria o MP3 na pasta --paths
+                    if "--paths" not in argv:  # ping de título
+                        self.stdout = iter(["faixa [abc]\n"])
+                        return self
+                    pasta = Path(argv[argv.index("--paths") + 1])
+                    pasta.mkdir(parents=True, exist_ok=True)
+                    alvo = pasta / "faixa [abc].mp3"
+                    alvo.write_bytes(b"audio")
+                    self.stdout = iter([str(alvo) + "\n"])
+                    return self
+
+            with patch("downloader.subprocess.Popen", PopenQueCria("", 0)):
                 resultado = downloader.baixar("https://example.org/a", "mp3")
-            self.assertEqual(resultado.caminho, arquivo.resolve())
+            self.assertEqual(resultado.caminho,
+                             (config.musicas / "faixa [abc].mp3").resolve())
 
     def test_localizador_ignora_arquivo_vazio_e_extensao_errada(self):
         with tempfile.TemporaryDirectory() as temp:

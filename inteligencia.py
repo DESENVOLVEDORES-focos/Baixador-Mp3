@@ -26,7 +26,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from typing import Any, Protocol
 

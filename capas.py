@@ -27,7 +27,7 @@ from typing import Any
 
 from inteligencia import (
     ClienteHTTPUrllib, ConsultaMusica, ErroAPI, InfoMusica,
-    ProvedorDeezer, ProvedorITunes,
+    ProvedorDeezer,
 )
 
 log = logging.getLogger("baixador.ia2.capas")

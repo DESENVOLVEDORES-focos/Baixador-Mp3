@@ -19,6 +19,7 @@ class Historico:
     def registrar(self, *, url: str, formato: str, status: str,
                   caminho: str | Path | None = None, mensagem: str = "",
                   inicio: str | None = None) -> dict[str, Any]:
+        """Grava um registro; ``data_hora`` é a data do registro (a exibida)."""
         registro: dict[str, Any] = {
             "data_hora": datetime.now(timezone.utc).isoformat(),
             "url": url,

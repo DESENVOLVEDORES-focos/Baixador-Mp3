@@ -10,6 +10,7 @@ Musicas/
 Videos/
 ferramentas/yt-dlp.exe
 ferramentas/ffmpeg.exe
+ferramentas/ffprobe.exe
 ferramentas/yt-dlp
 ferramentas/ffmpeg
 cookies.txt
@@ -20,3 +21,7 @@ cookies.txt
 **/preferencias.json
 *.cookies.txt
 cookies-export.txt
+
+# Instalação local
+Baixador-Mp3.lnk
+ferramentas/*.zip
